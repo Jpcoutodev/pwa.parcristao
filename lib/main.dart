@@ -173,7 +173,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   SwipeStatus _getSwipeStatus() {
     final x = _position.dx;
-    const threshold = 100.0;
+    const threshold = 60.0; // Mais sensível (era 100.0)
     
     if (x > threshold) return SwipeStatus.like;
     if (x < -threshold) return SwipeStatus.dislike;
@@ -903,7 +903,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             child: Transform.translate(
               offset: _position,
               child: Transform.rotate(
-                angle: _position.dx / 1000,
+                angle: _position.dx / 250, // Mais rotação (era 1000)
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
