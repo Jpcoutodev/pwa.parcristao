@@ -243,24 +243,35 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         targetGender = 'Masculino';
       }
       
-      // 2. Fetch profiles (Opposite gender if known)
+      // 2. Fetch IDs of profiles I already interacted with (Like, Pass, Super)
+      final List<String> swipedIds = [userId]; // Exclude myself too
+      
+      final likesRes = await supabase.from('likes').select('liked_id').eq('liker_id', userId);
+      final passesRes = await supabase.from('passes').select('passed_id').eq('user_id', userId);
+      final superRes = await supabase.from('super_likes').select('liked_id').eq('liker_id', userId);
+      
+      if (likesRes != null) swipedIds.addAll((likesRes as List).map((l) => l['liked_id'] as String));
+      if (passesRes != null) swipedIds.addAll((passesRes as List).map((p) => p['passed_id'] as String));
+      if (superRes != null) swipedIds.addAll((superRes as List).map((s) => s['liked_id'] as String));
+      
+      // 3. Fetch profiles (excluding swiped)
       var query = supabase
           .from('profiles')
           .select()
-          .neq('id', userId);
+          .not('id', 'in', swipedIds); // Direct exclusion in DB
       
       if (targetGender.isNotEmpty) {
         query = query.eq('gender', targetGender);
       }
           
       final response = await query
-          .range(_profileOffset, _profileOffset + 19) // 20 profiles per batch
+          .range(_profileOffset, _profileOffset + 19)
           .limit(20);
 
       if (response != null) {
         final List<dynamic> data = response;
         
-        // 3. Apply filters
+        // 4. Apply filters (Age, Religion, Distance)
         List<Profile> fetchedProfiles = data.map((json) => Profile(
           id: json['id'],
           name: json['name'] ?? 'Usuário',
@@ -278,70 +289,43 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           longitude: json['longitude'],
         )).toList();
         
-        // Filter by age (with debug)
-        print('DEBUG: Filtering age - Min: $ageMin, Max: $ageMax');
+        // Filter by age
         fetchedProfiles = fetchedProfiles.where((profile) {
-          bool ageMatch = profile.age >= ageMin && profile.age <= ageMax;
-          if (!ageMatch) {
-            print('DEBUG: Filtered out ${profile.name} (age ${profile.age})');
-          }
-          return ageMatch;
+          return profile.age >= ageMin && profile.age <= ageMax;
         }).toList();
         
         // Filter by religion
         fetchedProfiles = fetchedProfiles.where((profile) {
-          if (profile.faith == null || profile.faith!.isEmpty) return true; // Include if no faith set
+          if (profile.faith == null || profile.faith!.isEmpty) return true;
           return religionFilters.contains(profile.faith);
         }).toList();
         
         // Filter by distance (if user has location)
         if (myLat != null && myLng != null) {
           fetchedProfiles = fetchedProfiles.where((profile) {
-            if (profile.latitude == null || profile.longitude == null) {
-              return true; // Include profiles without location (fallback)
-            }
-            
-            double distance = Geolocator.distanceBetween(
-              myLat,
-              myLng,
-              profile.latitude!,
-              profile.longitude!,
-            ) / 1000; // Convert to km
-            
+            if (profile.latitude == null || profile.longitude == null) return true;
+            double distance = Geolocator.distanceBetween(myLat, myLng, profile.latitude!, profile.longitude!) / 1000;
             return distance <= searchRadius;
           }).toList();
-          
-          // Sort by distance (closest first)
-          fetchedProfiles.sort((a, b) {
-            if (a.latitude == null || a.longitude == null) return 1;
-            if (b.latitude == null || b.longitude == null) return -1;
-            
-            double distA = Geolocator.distanceBetween(myLat, myLng, a.latitude!, a.longitude!) / 1000;
-            double distB = Geolocator.distanceBetween(myLat, myLng, b.latitude!, b.longitude!) / 1000;
-            
-            return distA.compareTo(distB);
-          });
         }
-        
+
         print('======= FETCH PROFILES DEBUG =======');
-        print('Total fetched: ${data.length}');
-        print('After filters: ${fetchedProfiles.length}');
-        print('Filters: Radius=${searchRadius}km, Age=$ageMin-$ageMax, Religions=$religionFilters');
-        print('Offset: $_profileOffset');
+        print('Total fetched from DB: ${data.length}');
+        print('Excluding ${swipedIds.length} IDs (self + swiped)');
+        print('Final count after Local filters: ${fetchedProfiles.length}');
         print('=====================================');
-        
+
         setState(() {
           if (loadMore) {
-            profiles.addAll(fetchedProfiles);
+            profiles.insertAll(0, fetchedProfiles);
             _isLoadingMore = false;
           } else {
             profiles = fetchedProfiles;
             _isLoading = false;
           }
           
-          // Update pagination state
-          _profileOffset += fetchedProfiles.length;
-          _hasMoreProfiles = fetchedProfiles.length >= 20;
+          _profileOffset += response.length;
+          _hasMoreProfiles = response.length == 20;
         });
       }
     } catch (e) {
@@ -402,12 +386,21 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   void _animateAndRemove(SwipeStatus status) {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final targetX = status == SwipeStatus.like ? screenWidth * 1.5 : -screenWidth * 1.5;
+    final size = MediaQuery.of(context).size;
+    Offset endOffset;
+    
+    if (status == SwipeStatus.like) {
+      endOffset = Offset(size.width * 1.5, _position.dy);
+    } else if (status == SwipeStatus.dislike) {
+      endOffset = Offset(-size.width * 1.5, _position.dy);
+    } else {
+      // Super Like (Up)
+      endOffset = Offset(_position.dx, -size.height * 1.5);
+    }
     
     final animation = Tween<Offset>(
       begin: _position,
-      end: Offset(targetX, _position.dy),
+      end: endOffset,
     ).animate(CurvedAnimation(
       parent: _animationController,
       curve: Curves.easeOut,
@@ -454,147 +447,164 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     });
   }
 
+  // Helper method to process a like (can be called from Home or Interest Screen)
+  Future<void> _processLike(Profile targetProfile) async {
+    print('🔵 PROCESSING LIKE for: ${targetProfile.name} (${targetProfile.id})');
+    try {
+      final supabase = Supabase.instance.client;
+      final userId = supabase.auth.currentUser?.id;
+      
+      if (userId == null) return;
+
+      // 1. Check if the other person already liked me (Reciprocal Like)
+      // Check in BOTH likes and super_likes tables
+      final reciprocalLike = await supabase
+          .from('likes')
+          .select()
+          .eq('liker_id', targetProfile.id)
+          .eq('liked_id', userId)
+          .maybeSingle();
+      
+      final reciprocalSuper = await supabase
+          .from('super_likes')
+          .select()
+          .eq('liker_id', targetProfile.id)
+          .eq('liked_id', userId)
+          .maybeSingle();
+
+      print('DEBUG: Reciprocal Like from ${targetProfile.name}? ${reciprocalLike != null}');
+      print('DEBUG: Reciprocal Super from ${targetProfile.name}? ${reciprocalSuper != null}');
+
+      // 2. Save my like (using upsert to avoid unique constraint errors)
+      await supabase.from('likes').upsert({
+        'liker_id': userId,
+        'liked_id': targetProfile.id,
+      });
+      print('✅ Like saved successfully');
+
+      // 3. If they liked me, IT\'S A MATCH!
+      if (reciprocalLike != null || reciprocalSuper != null) {
+        print('💖 IT\'S A MATCH!');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('DEU MATCH com ${targetProfile.name}! ❤️'),
+              backgroundColor: Colors.pinkAccent,
+              duration: const Duration(seconds: 5),
+              action: SnackBarAction(
+                label: 'MENSAGENS',
+                textColor: Colors.white,
+                onPressed: () {
+                  setState(() => _selectedIndex = 1); // Vai para aba de chat
+                },
+              ),
+            ),
+          );
+        }
+        
+        // Clear all interests cache so they refresh next time the user views them
+        _interestFutures.clear();
+      }
+    } catch (e) {
+      print('❌ ERROR in _processLike: $e');
+    }
+  }
+
   void _onLike() async {
     if (profiles.isEmpty) return;
-    
-    final currentProfile = profiles.first;
+    final currentProfile = profiles.last; // Swiping the TOP card
     
     setState(() {
       _position = const Offset(150, 0);
     });
     
-    // Save like to database
-    print('🔵 LIKE BUTTON PRESSED for: ${currentProfile.name}');
-    try {
-      final supabase = Supabase.instance.client;
-      final userId = supabase.auth.currentUser?.id;
-      
-      if (userId != null) {
-        // 1. Check if the other person already liked me (Reciprocal Like)
-        final reciprocalLike = await supabase
-            .from('likes')
-            .select()
-            .eq('liker_id', currentProfile.id)
-            .eq('liked_id', userId)
-            .maybeSingle();
-
-        // 2. Save my like
-        await supabase.from('likes').insert({
-          'liker_id': userId,
-          'liked_id': currentProfile.id,
-        });
-        print('✅ Like saved successfully');
-
-        // 3. If they liked me, IT'S A MATCH!
-        if (reciprocalLike != null) {
-          print('💖 IT\'S A MATCH!');
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('DEU MATCH com ${currentProfile.name}! ❤️'),
-                backgroundColor: Colors.pinkAccent,
-                duration: const Duration(seconds: 4),
-                action: SnackBarAction(
-                  label: 'MENSAGENS',
-                  textColor: Colors.white,
-                  onPressed: () {
-                    setState(() => _selectedIndex = 1); // Vai para aba de chat
-                  },
-                ),
-              ),
-            );
-          }
-          
-          // Clear matches cache to show the new match immediately in the other tab
-          _interestFutures.remove('mutuos');
-        }
-      }
-    } catch (e) {
-      print('❌ ERROR saving like: $e');
-    }
-    
+    await _processLike(currentProfile);
     _animateAndRemove(SwipeStatus.like);
   }
 
   void _onDislike() async {
     if (profiles.isEmpty) return;
-    
-    final currentProfile = profiles.first;
+    final currentProfile = profiles.last;
     
     setState(() {
       _position = const Offset(-150, 0);
     });
     
-    // Save pass to database
-    print('🔴 DISLIKE BUTTON PRESSED for: ${currentProfile.name}');
+    await _onDislikeFromProfile(currentProfile);
+    _animateAndRemove(SwipeStatus.dislike);
+  }
+
+  Future<void> _onDislikeFromProfile(Profile profile) async {
+    print('🔴 DISLIKE saved for: ${profile.name}');
     try {
       final supabase = Supabase.instance.client;
       final userId = supabase.auth.currentUser?.id;
       
       if (userId != null) {
-        await supabase.from('passes').insert({
+        await supabase.from('passes').upsert({
           'user_id': userId,
-          'passed_id': currentProfile.id,
+          'passed_id': profile.id,
         });
-        print('✅ Pass saved successfully: $userId -> ${currentProfile.id}');
       }
     } catch (e) {
       print('❌ ERROR saving pass: $e');
     }
-    
-    _animateAndRemove(SwipeStatus.dislike);
   }
 
   void _onSuperLike() async {
     if (profiles.isEmpty) return;
-    
-    final currentProfile = profiles.first;
+    final currentProfile = profiles.last;
     
     setState(() {
       _position = const Offset(0, -150);
     });
     
-    // Save super like to database
-    print('⭐ SUPER LIKE BUTTON PRESSED for: ${currentProfile.name}');
+    await _onSuperLikeFromProfile(currentProfile);
+    _animateAndRemove(SwipeStatus.superLike);
+  }
+
+  Future<void> _onSuperLikeFromProfile(Profile profile) async {
+    print('⭐ SUPER LIKE saved for: ${profile.name}');
     try {
       final supabase = Supabase.instance.client;
       final userId = supabase.auth.currentUser?.id;
       
       if (userId != null) {
-        await supabase.from('super_likes').insert({
+        await supabase.from('super_likes').upsert({
           'liker_id': userId,
-          'liked_id': currentProfile.id,
+          'liked_id': profile.id,
         });
-        print('✅ Super like saved successfully: $userId -> ${currentProfile.id}');
       }
     } catch (e) {
       print('❌ ERROR saving super like: $e');
     }
-    
-    final animation = Tween<Offset>(
-      begin: _position,
-      end: const Offset(0, -800),
-    ).animate(CurvedAnimation(
-      parent: _animationController,
-      curve: Curves.easeOut,
-    ));
+  }
 
-    _animationController.reset();
-    animation.addListener(() {
-      setState(() {
-        _position = animation.value;
-      });
-    });
-
-    _animationController.forward().then((_) {
-      setState(() {
-        if (profiles.isNotEmpty) {
-          profiles.removeLast();
-        }
-        _position = Offset.zero;
-        _isDragging = false;
-      });
-    });
+  Future<void> _onCancelLike(Profile profile) async {
+    print('🟠 CANCEL LIKE for: ${profile.name}');
+    try {
+      final supabase = Supabase.instance.client;
+      final userId = supabase.auth.currentUser?.id;
+      
+      if (userId != null) {
+        // 1. Delete the like I sent
+        await supabase.from('likes')
+            .delete()
+            .eq('liker_id', userId)
+            .eq('liked_id', profile.id);
+        
+        // 2. Add to passes (rejected)
+        await supabase.from('passes').upsert({
+          'user_id': userId,
+          'passed_id': profile.id,
+        });
+        
+        // Refresh interests cache
+        _interestFutures.clear();
+      }
+    } catch (e) {
+      print('❌ ERROR canceling like: $e');
+    }
   }
 
   @override
@@ -720,7 +730,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   Widget _buildMatchesTab() {
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Scaffold(
         appBar: AppBar(
           backgroundColor: Colors.white,
@@ -740,6 +750,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               Tab(text: 'Recebidos'), // Interesses (Quem curtiu você)
               Tab(text: 'Mútuos'),    // Match (Os dois)
               Tab(text: 'Super'),     // Super Like
+              Tab(text: 'Enviados'),  // Curtidas enviadas (NOVO)
             ],
           ),
         ),
@@ -748,6 +759,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             _buildInterestGrid(status: 'recebidos'),
             _buildInterestGrid(status: 'mutuos'),
             _buildInterestGrid(status: 'super'),
+            _buildInterestGrid(status: 'enviados'),
           ],
         ),
       ),
@@ -845,7 +857,32 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             itemCount: interestProfiles.length,
             itemBuilder: (context, index) {
               final profile = interestProfiles[index];
-              return _buildInterestCard(profile, status);
+              return GestureDetector(
+                onTap: () async {
+                  final action = await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => ProfileDetailScreen(profile: profile),
+                    ),
+                  );
+                  
+                  if (action == 'like') {
+                    await _processLike(profile);
+                    _refreshInterestTab(status);
+                  } else if (action == 'dislike') {
+                    if (status == 'enviados') {
+                      await _onCancelLike(profile);
+                    } else {
+                      await _onDislikeFromProfile(profile);
+                    }
+                    _refreshInterestTab(status);
+                  } else if (action == 'super') {
+                    await _onSuperLikeFromProfile(profile);
+                    _refreshInterestTab(status);
+                  }
+                },
+                child: _buildInterestCard(profile, status),
+              );
             },
           ),
         );
@@ -869,9 +906,28 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       if (userId == null) return [];
       
       List<Profile> profiles = [];
+
+      // 1. Always fetch matches and passes first to filter them out from other tabs
+      final matchesData = await supabase
+          .from('matches')
+          .select('user1_id, user2_id')
+          .or('user1_id.eq.$userId,user2_id.eq.$userId');
+      
+      final List<String> matchedUserIds = [];
+      for (var m in matchesData) {
+        matchedUserIds.add(m['user1_id'] == userId ? m['user2_id'] : m['user1_id']);
+      }
+
+      final passesData = await supabase
+          .from('passes')
+          .select('passed_id')
+          .eq('user_id', userId);
+      
+      final List<String> passedUserIds = (passesData as List)
+          .map((p) => p['passed_id'] as String)
+          .toList();
       
       if (status == 'recebidos') {
-        // Single query with join
         final data = await supabase
             .from('likes')
             .select('liker_id, sender:profiles!likes_liker_id_fkey(*)')
@@ -880,12 +936,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         for (var item in data) {
           final profileData = item['sender'];
           if (profileData != null) {
-            profiles.add(_mapProfile(profileData));
+            final profile = _mapProfile(profileData);
+            // Filter out if already matched OR already passed
+            if (!matchedUserIds.contains(profile.id) && !passedUserIds.contains(profile.id)) {
+              profiles.add(profile);
+            }
           }
         }
             
       } else if (status == 'mutuos') {
-        // Single query with joins for both potential sides
         final data = await supabase
             .from('matches')
             .select('user1_id, user2_id, p1:profiles!matches_user1_id_fkey(*), p2:profiles!matches_user2_id_fkey(*)')
@@ -899,7 +958,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         }
             
       } else if (status == 'super') {
-        // Single query with join
         final data = await supabase
             .from('super_likes')
             .select('liker_id, sender:profiles!super_likes_liker_id_fkey(*)')
@@ -908,12 +966,33 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         for (var item in data) {
           final profileData = item['sender'];
           if (profileData != null) {
-            profiles.add(_mapProfile(profileData));
+            final profile = _mapProfile(profileData);
+            // Filter out if matched OR passed
+            if (!matchedUserIds.contains(profile.id) && !passedUserIds.contains(profile.id)) {
+              profiles.add(profile);
+            }
+          }
+        }
+      } else if (status == 'enviados') {
+        // Likes that I sent
+        final data = await supabase
+            .from('likes')
+            .select('liked_id, receiver:profiles!likes_liked_id_fkey(*)')
+            .eq('liker_id', userId);
+        
+        for (var item in data) {
+          final profileData = item['receiver'];
+          if (profileData != null) {
+            final profile = _mapProfile(profileData);
+            // Filter out if matched (those are in 'mutuos')
+            if (!matchedUserIds.contains(profile.id)) {
+              profiles.add(profile);
+            }
           }
         }
       }
       
-      print('✅ Loaded ${profiles.length} profiles for $status');
+      print('✅ Loaded ${profiles.length} profiles for $status (Filtered ${matchedUserIds.length} matches, ${passedUserIds.length} passes)');
       return profiles;
     } catch (e) {
       print('❌ Error in _fetchInterestProfiles ($status): $e');
@@ -2336,15 +2415,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 0),
                     child: ElevatedButton.icon(
-                      onPressed: () {
-                        // TODO: Implementar lógica para mostrar perfis rejeitados
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Funcionalidade em desenvolvimento'),
-                            backgroundColor: Color(0xFF667eea),
-                          ),
-                        );
-                      },
+                      onPressed: _showResetRejectedDialog,
                       icon: const Icon(Icons.refresh, size: 20),
                       label: const Text('Ver Novamente Perfis Rejeitados'),
                       style: ElevatedButton.styleFrom(
@@ -2538,6 +2609,60 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Erro ao ativar localização: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Future<void> _showResetRejectedDialog() async {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Ver perfis novamente?'),
+        content: const Text('Isso fará com que todos os perfis que você rejeitou voltem a aparecer no seu feed de início.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('CANCELAR', style: TextStyle(color: Colors.grey)),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _resetRejectedProfiles();
+            },
+            child: const Text('VER NOVAMENTE', style: TextStyle(color: Color(0xFF667eea), fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _resetRejectedProfiles() async {
+    try {
+      final supabase = Supabase.instance.client;
+      final userId = supabase.auth.currentUser?.id;
+      
+      if (userId == null) return;
+      
+      // Delete all entries from 'passes' table for this user
+      await supabase.from('passes').delete().eq('user_id', userId);
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('✓ Perfis rejeitados resetados com sucesso!'),
+          backgroundColor: Colors.green,
+        ),
+      );
+      
+      // Refresh profiles list to show them again
+      _fetchProfiles();
+      
+    } catch (e) {
+      print('Erro ao resetar perfis rejeitados: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Erro ao resetar: $e'),
           backgroundColor: Colors.red,
         ),
       );
