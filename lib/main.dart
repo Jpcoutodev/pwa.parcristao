@@ -1,7 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:novo_app/onboarding_screen.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:novo_app/supabase_config.dart';
+import 'package:novo_app/auth_screen.dart';
+import 'package:novo_app/edit_profile_screen.dart'; // Import da tela de edição
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  await Supabase.initialize(
+    url: SupabaseConfig.url,
+    anonKey: SupabaseConfig.anonKey,
+  );
+
   runApp(const ParCristaoApp());
 }
 
@@ -10,6 +21,10 @@ class ParCristaoApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Check if user is logged in
+    final session = Supabase.instance.client.auth.currentSession;
+    final initialScreen = session != null ? const HomeScreen() : const AuthScreen();
+
     return MaterialApp(
       title: 'Par Cristão',
       debugShowCheckedModeBanner: false,
@@ -18,7 +33,7 @@ class ParCristaoApp extends StatelessWidget {
         fontFamily: 'Roboto',
         scaffoldBackgroundColor: const Color(0xFFF5F5F5),
       ),
-      home: const OnboardingScreen(), // Começar pelo onboarding
+      home: initialScreen,
     );
   }
 }
@@ -719,63 +734,125 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildProfileTab() {
-    // Perfil fictício do usuário logado para visualização
-    final myProfile = Profile(
-      id: 'me',
-      name: 'João',
-      age: 28,
-      gender: 'Masculino',
-      imageUrls: [
-        'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?ixlib=rb-4.0.3&auto=format&fit=crop&w=687&q=80',
-        'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?ixlib=rb-4.0.3&auto=format&fit=crop&w=687&q=80'
-      ],
-      bio: 'Apaixonado por música e servindo na adoração. Busco alguém com os mesmos propósitos e que ame a Deus acima de tudo.',
-      church: 'Igreja Batista da Lagoinha',
-      ministry: 'Exerço ministério',
-      faith: 'Evangélica',
-      city: 'Belo Horizonte, MG',
-      interests: ['Música', 'Café', 'Viagens', 'Teologia', 'Louvor', 'Leitura'],
-    );
+  Future<Profile?> _getMyProfile() async {
+    try {
+      final supabase = Supabase.instance.client;
+      final userId = supabase.auth.currentUser?.id;
+      if (userId == null) return null;
+      
+      final data = await supabase.from('profiles').select().eq('id', userId).maybeSingle();
+      if (data == null) return null;
+      
+      // Parse Imagens
+      List<String> images = [];
+      if (data['image_urls'] != null) {
+        images = List<String>.from(data['image_urls']);
+      }
+      
+      return Profile(
+        id: data['id'],
+        name: data['name'] ?? '',
+        age: data['age'] ?? 0,
+        gender: data['gender'],
+        imageUrls: images,
+        bio: data['bio'] ?? '',
+        church: data['church'] ?? '',
+        ministry: data['ministry'],
+        faith: data['faith'],
+        city: data['city'] ?? '',
+        interests: List<String>.from(data['interests'] ?? []),
+      );
+    } catch (e) {
+      print('Erro ao carregar perfil: $e');
+      return null;
+    }
+  }
 
-    return Scaffold(
-      backgroundColor: const Color(0xFFF8F9FA),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          child: Column(
-            children: [
-              // Header com gradiente
-              Container(
-                width: double.infinity,
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [Color(0xFF667eea), Color(0xFF764ba2)],
-                  ),
-                  borderRadius: BorderRadius.only(
-                    bottomLeft: Radius.circular(40),
-                    bottomRight: Radius.circular(40),
-                  ),
-                ),
-                child: Column(
-                  children: [
-                    const SizedBox(height: 20),
-                    
-                    // Título
-                    const Text(
-                      'Meu Perfil',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
+  void _navigateToEditProfile() async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const EditProfileScreen()),
+    );
+    // Se retornou true, atualiza
+    if (result == true) {
+      setState(() {
+        // Força rebuild do FutureBuilder
+      });
+    }
+  }
+
+  Widget _buildProfileTab() {
+    return FutureBuilder<Profile?>(
+      future: _getMyProfile(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        
+        // Se não houver perfil (não fez onboarding ou erro), usa o mock/default ou mostra mensagem
+        final myProfile = snapshot.data ?? Profile(
+          id: 'me',
+          name: 'Usuário',
+          age: 0,
+          gender: '',
+          imageUrls: [],
+          bio: 'Complete seu cadastro!',
+          church: '',
+          city: '',
+          interests: [],
+        );
+
+        final mainImage = myProfile.imageUrls.isNotEmpty 
+            ? myProfile.imageUrls.first 
+            : 'https://placehold.co/600x400/png?text=Sem+Foto';
+
+        return Scaffold(
+          backgroundColor: const Color(0xFFF8F9FA),
+          body: SafeArea(
+            child: SingleChildScrollView(
+              child: Column(
+                children: [
+                  // Header com gradiente
+                  Container(
+                    width: double.infinity,
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [Color(0xFF667eea), Color(0xFF764ba2)],
+                      ),
+                      borderRadius: const BorderRadius.only(
+                        bottomLeft: Radius.circular(40),
+                        bottomRight: Radius.circular(40),
                       ),
                     ),
-                    
-                    const SizedBox(height: 25),
-                    
-                    // Foto de Perfil
-                    Stack(
+                    child: Column(
+                      children: [
+                        const SizedBox(height: 20),
+                        // Título e Botão Editar
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text(
+                                'Meu Perfil',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.edit, color: Colors.white),
+                                onPressed: _navigateToEditProfile,
+                                tooltip: 'Editar Perfil',
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        Stack(
                       alignment: Alignment.bottomRight,
                       children: [
                         Container(
@@ -852,9 +929,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         _buildProfileHeaderButton(
                           Icons.edit_outlined,
                           'Editar',
-                          () {
-                            print('Editar perfil');
-                          },
+                          _navigateToEditProfile,
                         ),
                         const SizedBox(width: 20),
                         _buildProfileHeaderButton(
@@ -1057,12 +1132,58 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   ],
                 ),
               ),
+              const SizedBox(height: 30),
+
+              // Botão de Sair
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: TextButton.icon(
+                  onPressed: () async {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Saindo...'), duration: Duration(seconds: 1)),
+                    );
+
+                    try {
+                      await Supabase.instance.client.auth.signOut();
+                    } catch (e) {
+                      print("Erro no signOut (ignorado para forçar saída): $e");
+                    }
+
+                    if (context.mounted) {
+                      Navigator.pushAndRemoveUntil(
+                        context,
+                        MaterialPageRoute(builder: (context) => const AuthScreen()),
+                        (route) => false,
+                      );
+                    }
+                  },
+                  icon: const Icon(Icons.logout_rounded, color: Colors.redAccent),
+                  label: const Text(
+                    'Sair da Conta',
+                    style: TextStyle(
+                      color: Colors.redAccent,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                  style: TextButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 15, horizontal: 25),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(15),
+                      side: BorderSide(color: Colors.redAccent.withOpacity(0.3)),
+                    ),
+                  ),
+                ),
+              ),
               
               const SizedBox(height: 120),
             ],
           ),
         ),
       ),
+    );
+      },
     );
   }
 

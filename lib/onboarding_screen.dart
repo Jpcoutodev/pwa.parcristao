@@ -1,6 +1,11 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show kIsWeb; // IMPORTANTE para verificar se é Web
 import 'dart:math' as math;
-import 'package:novo_app/main.dart'; // Import para navegar para HomeScreen
+import 'package:image_picker/image_picker.dart';
+import 'package:novo_app/main.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:novo_app/auth_screen.dart';
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
@@ -49,6 +54,40 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
     'Música', 'Leitura', 'Esportes', 'Teologia', 'Viagens', 'Café', 
     'Cinema', 'Missões', 'Crianças', 'Tecnologia', 'Culinária', 'Natureza'
   ];
+
+  // Photos
+  final ImagePicker _picker = ImagePicker();
+  List<XFile> _selectedImages = [];
+
+  Future<void> _pickImage() async {
+    try {
+      final List<XFile> images = await _picker.pickMultiImage(
+        imageQuality: 70, // Compprime a imagem (reduz tamanho)
+        maxWidth: 1440,   // Redimensiona se for muito grande
+        maxHeight: 1440,
+        requestFullMetadata: false, // Ajuda a remover metadados extras (HEIC -> JPG no iOS muitas vezes)
+      );
+      
+      if (images.isNotEmpty) {
+        setState(() {
+          _selectedImages.addAll(images);
+          // Limit to 6 photos
+          if (_selectedImages.length > 6) {
+             _selectedImages = _selectedImages.sublist(0, 6);
+             _showError('Máximo de 6 fotos permitidas.');
+          }
+        });
+      }
+    } catch (e) {
+      _showError('Erro ao selecionar fotos: $e');
+    }
+  }
+
+  void _removeImage(int index) {
+    setState(() {
+      _selectedImages.removeAt(index);
+    });
+  }
 
   @override
   void initState() {
@@ -99,14 +138,92 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
   }
 
   void _nextPage() {
-    if (_currentPage < 7) {
-      _pageController.nextPage(
-        duration: const Duration(milliseconds: 400),
-        curve: Curves.easeInOut,
-      );
-    } else {
-      _finishOnboarding();
+    if (_validateCurrentStep()) {
+      if (_currentPage < 7) {
+        _pageController.nextPage(
+          duration: const Duration(milliseconds: 400),
+          curve: Curves.easeInOut,
+        );
+      } else {
+        _finishOnboarding();
+      }
     }
+  }
+
+  bool _validateCurrentStep() {
+    switch (_currentPage) {
+      case 0: // Welcome
+        return true;
+      case 1: // Basic Info
+        if (_nameController.text.trim().isEmpty) {
+          _showError('Por favor, informe seu nome.');
+          return false;
+        }
+        if (_selectedGender == null) {
+          _showError('Por favor, selecione seu gênero.');
+          return false;
+        }
+        if (_selectedDate == null) {
+          _showError('Por favor, informe sua data de nascimento.');
+          return false;
+        }
+        final age = DateTime.now().year - _selectedDate!.year;
+        if (age < 18) {
+          _showError('Você precisa ter pelo menos 18 anos.');
+          return false;
+        }
+        return true;
+      case 2: // Bio
+        if (_bioController.text.trim().isEmpty) {
+          _showError('Escreva um pouco sobre você.');
+          return false;
+        }
+        return true;
+      case 3: // Location
+        if (_cityController.text.trim().isEmpty) {
+          _showError('Informe sua cidade.');
+          return false;
+        }
+        return true;
+      case 4: // Interests
+        if (_selectedInterests.length < 3) {
+          _showError('Selecione pelo menos 3 interesses.');
+          return false;
+        }
+        return true;
+      case 5: // Faith
+        if (_selectedFaith == null) {
+          _showError('Selecione sua tradição de fé.');
+          return false;
+        }
+        return true;
+      case 6: // Church
+        if (_churchController.text.trim().isEmpty) {
+           _showError('Informe o nome da sua igreja ou "Nenhuma".');
+           return false;
+        }
+        return true;
+      case 7: // Photos
+        if (_selectedImages.isEmpty) {
+          _showError('Adicione pelo menos uma foto.');
+          return false;
+        }
+        return true;
+      default:
+        return true;
+    }
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message, style: const TextStyle(color: Colors.white)),
+        backgroundColor: Colors.redAccent,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        margin: const EdgeInsets.all(20),
+      ),
+    );
   }
 
   void _previousPage() {
@@ -118,12 +235,94 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
     }
   }
 
-  void _finishOnboarding() {
-    // Navigate to TutorialScreen first, then HomeScreen
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (context) => const TutorialScreen()),
-    );
+  Future<void> _finishOnboarding() async {
+    try {
+      // Mostrar loading
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(child: CircularProgressIndicator(color: Colors.white)),
+      );
+
+      final supabase = Supabase.instance.client;
+      
+      // 1. Usar ID do usuário autenticado (login/cadastro prévio)
+      final session = supabase.auth.currentSession;
+      final userId = session?.user.id;
+      
+      if (userId == null) {
+         // Se cair aqui, é porque algo deu errado no fluxo de Auth
+         // Mandar de volta para Login
+         Navigator.pushReplacement(
+           context,
+           MaterialPageRoute(builder: (context) => const AuthScreen()),
+         );
+         return;
+      }
+
+      // 2. Upload de Fotos
+      List<String> uploadedImageUrls = [];
+      for (var i = 0; i < _selectedImages.length; i++) {
+         final imageFile = File(_selectedImages[i].path);
+         final fileExt = imageFile.path.split('.').last;
+         final fileName = '$userId/${DateTime.now().millisecondsSinceEpoch}_$i.$fileExt';
+         
+         try {
+           // Tenta upload
+           final storageResponse = await supabase.storage.from('profile-photos').upload(
+             fileName,
+             imageFile,
+             fileOptions: const FileOptions(cacheControl: '3600', upsert: false),
+           );
+           
+           // Pega URL pública
+           final imageUrl = supabase.storage.from('profile-photos').getPublicUrl(fileName);
+           uploadedImageUrls.add(imageUrl);
+
+         } catch (e) {
+            print("Erro ao subir imagem $i: $e");
+            // Se der erro no upload, ignora essa imagem e segue (ou poderia travar)
+            // Aqui vamos logar e continuar
+         }
+      }
+
+      // 3. Salvar Perfil
+      await supabase.from('profiles').upsert({
+        'id': userId,
+        'name': _nameController.text,
+        'age': _selectedDate != null ? (DateTime.now().year - _selectedDate!.year) : 0,
+        'gender': _selectedGender,
+        'bio': _bioController.text,
+        'city': _cityController.text,
+        'interests': _selectedInterests,
+        'faith': _selectedFaith,
+        'church': _churchController.text,
+        'ministry': _selectedMinistry,
+        'image_urls': uploadedImageUrls, // Salva URLs das fotos
+        'updated_at': DateTime.now().toIso8601String(),
+      });
+
+      // Fechar loading
+      if (mounted) Navigator.pop(context);
+
+      // Navegar para TutorialScreen
+      if (mounted) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const TutorialScreen()),
+        );
+      }
+    } catch (e) {
+      // Fechar loading
+      if (mounted) Navigator.pop(context);
+      
+      // Mostrar erro
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erro ao salvar perfil: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
   }
 
   @override
@@ -1042,7 +1241,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'Adicione fotos que mostrem sua personalidade',
+                  'Adicione fotos que mostrem sua personalidade (Min. 1)',
                   style: TextStyle(color: Colors.grey[600], fontSize: 13),
                 ),
               ),
@@ -1058,73 +1257,93 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
               crossAxisSpacing: 12,
               mainAxisSpacing: 12,
             ),
-            itemCount: 6,
+            itemCount: _selectedImages.length + 1, // +1 for the add button
             itemBuilder: (context, index) {
-              final bool isMain = index == 0;
-              return GestureDetector(
-                onTap: () {
-                  // TODO: Implementar seleção de foto
-                },
-                child: Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: isMain
-                          ? [_primaryColor.withOpacity(0.1), _secondaryColor.withOpacity(0.05)]
-                          : [Colors.grey[100]!, Colors.grey[50]!],
+              if (index == _selectedImages.length) {
+                // Add button
+                if (_selectedImages.length >= 6) return const SizedBox.shrink();
+                
+                return GestureDetector(
+                  onTap: _pickImage,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.grey[100],
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.grey[300]!, style: BorderStyle.solid),
                     ),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: isMain ? _primaryColor.withOpacity(0.3) : Colors.grey[300]!,
-                      width: isMain ? 2 : 1,
-                      strokeAlign: BorderSide.strokeAlignInside,
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.add_a_photo_rounded, color: Colors.grey[400], size: 30),
+                        const SizedBox(height: 4),
+                        Text('Adicionar', style: TextStyle(color: Colors.grey[500], fontSize: 10)),
+                      ],
                     ),
                   ),
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Container(
-                            width: 40,
-                            height: 40,
-                            decoration: BoxDecoration(
-                              gradient: isMain
-                                  ? LinearGradient(colors: [_primaryColor, _secondaryColor])
-                                  : null,
-                              color: isMain ? null : Colors.grey[300],
-                              shape: BoxShape.circle,
-                            ),
-                            child: Icon(
-                              Icons.add_rounded,
-                              color: isMain ? Colors.white : Colors.grey[500],
-                              size: 22,
-                            ),
-                          ),
-                          if (isMain) ...[
-                            const SizedBox(height: 6),
-                            Text(
-                              'Principal',
-                              style: TextStyle(
-                                color: _primaryColor,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ],
+                );
+              }
+
+              final image = _selectedImages[index];
+              return Stack(
+                children: [
+                  Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(16),
+                      image: DecorationImage(
+                        // CORREÇÃO: Usar NetworkImage para Web (blob url) e FileImage para Mobile
+                        image: kIsWeb 
+                            ? NetworkImage(image.path) 
+                            : FileImage(File(image.path)) as ImageProvider,
+                        fit: BoxFit.cover,
                       ),
-                    ],
+                    ),
                   ),
-                ),
+                  Positioned(
+                    top: 4,
+                    right: 4,
+                    child: GestureDetector(
+                      onTap: () => _removeImage(index),
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: const BoxDecoration(
+                            color: Colors.black54, shape: BoxShape.circle),
+                        child: const Icon(Icons.close, color: Colors.white, size: 14),
+                      ),
+                    ),
+                  ),
+                  if (index == 0)
+                    Positioned(
+                       bottom: 0,
+                       left: 0,
+                       right: 0,
+                       child: Container(
+                         padding: const EdgeInsets.symmetric(vertical: 4),
+                         decoration: BoxDecoration(
+                           color: _primaryColor.withOpacity(0.8),
+                           borderRadius: const BorderRadius.only(
+                             bottomLeft: Radius.circular(16),
+                             bottomRight: Radius.circular(16),
+                           ),
+                         ),
+                         child: const Text(
+                           'Principal',
+                           textAlign: TextAlign.center,
+                           style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                         ),
+                       ),
+                    ),
+                ],
               );
             },
           ),
           
           const SizedBox(height: 36),
-          _buildFinishButton('Finalizar Cadastro', _finishOnboarding),
+          _buildFinishButton('Finalizar Cadastro', () {
+             // Validate and Finish
+             if (_validateCurrentStep()) {
+               _finishOnboarding();
+             }
+          }),
         ],
       ),
     );
