@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:novo_app/supabase_config.dart';
 import 'package:novo_app/auth_screen.dart';
 import 'package:novo_app/edit_profile_screen.dart'; // Import da tela de edição
+import 'package:geolocator/geolocator.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -52,6 +53,8 @@ class Profile {
   final String city;
   final List<String> interests;
   final bool isOnline;
+  final double? latitude; // Novo: Latitude para cálculo de distância
+  final double? longitude; // Novo: Longitude para cálculo de distância
 
   Profile({
     required this.id,
@@ -66,6 +69,8 @@ class Profile {
     required this.city,
     required this.interests,
     this.isOnline = false,
+    this.latitude,
+    this.longitude,
   });
 }
 
@@ -149,11 +154,29 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
-  List<Profile> profiles = List.from(sampleProfiles);
+  List<Profile> profiles = [];
+  bool _isLoading = true;
   Offset _position = Offset.zero;
   bool _isDragging = false;
   late AnimationController _animationController;
   int _selectedIndex = 0; // Índice da aba selecionada
+  
+  // Search preferences
+  double _searchRadius = 250.0;
+  RangeValues _ageRange = const RangeValues(18, 75);
+  Set<String> _religionFilters = {'Católica', 'Evangélica', 'Ortodoxa', 'Outras denominações cristãs'};
+  
+  // Location tracking
+  bool _hasLocation = false;
+  bool _isCheckingLocation = true;
+  
+  // Pagination
+  int _profileOffset = 0;
+  bool _hasMoreProfiles = true;
+  bool _isLoadingMore = false;
+  
+  // Cache for interest futures to prevent re-fetching on every build
+  final Map<String, Future<List<Profile>>> _interestFutures = {};
   
   @override
   void initState() {
@@ -162,6 +185,172 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       duration: const Duration(milliseconds: 300),
       vsync: this,
     );
+    _fetchProfiles();
+    _checkUserLocation();
+  }
+
+  Future<void> _fetchProfiles({bool loadMore = false}) async {
+    if (loadMore && !_hasMoreProfiles) return;
+    if (loadMore && _isLoadingMore) return;
+    
+    if (loadMore) {
+      setState(() => _isLoadingMore = true);
+    } else {
+      setState(() {
+        _isLoading = true;
+        _profileOffset = 0;
+        _hasMoreProfiles = true;
+      });
+    }
+    
+    try {
+      final supabase = Supabase.instance.client;
+      final currentUser = supabase.auth.currentUser;
+      
+      final userId = currentUser?.id ?? '';
+
+      // 1. Get My Profile (gender, location, preferences)
+      final myProfileData = await supabase
+          .from('profiles')
+          .select('gender, latitude, longitude, search_radius, age_min, age_max, religion_filters')
+          .eq('id', userId)
+          .maybeSingle();
+      
+      if (myProfileData == null) {
+        setState(() {
+          _isLoading = false;
+          _isLoadingMore = false;
+        });
+        return;
+      }
+      
+      String? myGender = myProfileData['gender'];
+      double? myLat = myProfileData['latitude'];
+      double? myLng = myProfileData['longitude'];
+      
+      // Load search preferences (with defaults)
+      int searchRadius = myProfileData['search_radius'] ?? 250;
+      int ageMin = myProfileData['age_min'] ?? 18;
+      int ageMax = myProfileData['age_max'] ?? 75;
+      List<String> religionFilters = myProfileData['religion_filters'] != null 
+          ? List<String>.from(myProfileData['religion_filters'])
+          : ['Católica', 'Evangélica', 'Ortodoxa', 'Outras denominações cristãs'];
+      
+      String targetGender = '';
+      if (myGender == 'Masculino') {
+        targetGender = 'Feminino';
+      } else if (myGender == 'Feminino') {
+        targetGender = 'Masculino';
+      }
+      
+      // 2. Fetch profiles (Opposite gender if known)
+      var query = supabase
+          .from('profiles')
+          .select()
+          .neq('id', userId);
+      
+      if (targetGender.isNotEmpty) {
+        query = query.eq('gender', targetGender);
+      }
+          
+      final response = await query
+          .range(_profileOffset, _profileOffset + 19) // 20 profiles per batch
+          .limit(20);
+
+      if (response != null) {
+        final List<dynamic> data = response;
+        
+        // 3. Apply filters
+        List<Profile> fetchedProfiles = data.map((json) => Profile(
+          id: json['id'],
+          name: json['name'] ?? 'Usuário',
+          age: json['age'] ?? 0,
+          gender: json['gender'],
+          imageUrls: List<String>.from(json['image_urls'] ?? []),
+          bio: json['bio'] ?? '',
+          church: json['church'] ?? '',
+          ministry: json['ministry'],
+          faith: json['faith'],
+          city: json['city'] ?? '',
+          interests: List<String>.from(json['interests'] ?? []),
+          isOnline: false,
+          latitude: json['latitude'],
+          longitude: json['longitude'],
+        )).toList();
+        
+        // Filter by age (with debug)
+        print('DEBUG: Filtering age - Min: $ageMin, Max: $ageMax');
+        fetchedProfiles = fetchedProfiles.where((profile) {
+          bool ageMatch = profile.age >= ageMin && profile.age <= ageMax;
+          if (!ageMatch) {
+            print('DEBUG: Filtered out ${profile.name} (age ${profile.age})');
+          }
+          return ageMatch;
+        }).toList();
+        
+        // Filter by religion
+        fetchedProfiles = fetchedProfiles.where((profile) {
+          if (profile.faith == null || profile.faith!.isEmpty) return true; // Include if no faith set
+          return religionFilters.contains(profile.faith);
+        }).toList();
+        
+        // Filter by distance (if user has location)
+        if (myLat != null && myLng != null) {
+          fetchedProfiles = fetchedProfiles.where((profile) {
+            if (profile.latitude == null || profile.longitude == null) {
+              return true; // Include profiles without location (fallback)
+            }
+            
+            double distance = Geolocator.distanceBetween(
+              myLat,
+              myLng,
+              profile.latitude!,
+              profile.longitude!,
+            ) / 1000; // Convert to km
+            
+            return distance <= searchRadius;
+          }).toList();
+          
+          // Sort by distance (closest first)
+          fetchedProfiles.sort((a, b) {
+            if (a.latitude == null || a.longitude == null) return 1;
+            if (b.latitude == null || b.longitude == null) return -1;
+            
+            double distA = Geolocator.distanceBetween(myLat, myLng, a.latitude!, a.longitude!) / 1000;
+            double distB = Geolocator.distanceBetween(myLat, myLng, b.latitude!, b.longitude!) / 1000;
+            
+            return distA.compareTo(distB);
+          });
+        }
+        
+        print('======= FETCH PROFILES DEBUG =======');
+        print('Total fetched: ${data.length}');
+        print('After filters: ${fetchedProfiles.length}');
+        print('Filters: Radius=${searchRadius}km, Age=$ageMin-$ageMax, Religions=$religionFilters');
+        print('Offset: $_profileOffset');
+        print('=====================================');
+        
+        setState(() {
+          if (loadMore) {
+            profiles.addAll(fetchedProfiles);
+            _isLoadingMore = false;
+          } else {
+            profiles = fetchedProfiles;
+            _isLoading = false;
+          }
+          
+          // Update pagination state
+          _profileOffset += fetchedProfiles.length;
+          _hasMoreProfiles = fetchedProfiles.length >= 20;
+        });
+      }
+    } catch (e) {
+      print('Erro ao buscar perfis: $e');
+      setState(() {
+        _isLoading = false;
+        _isLoadingMore = false;
+      });
+    }
   }
 
   @override
@@ -171,6 +360,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   void _onItemTapped(int index) {
+    // If leaving Settings tab (index 4) and going to feed (index 0), refresh profiles
+    if (_selectedIndex == 4 && index == 0) {
+      _fetchProfiles(); // Refresh to apply new filter settings
+    }
+    
     setState(() {
       _selectedIndex = index;
     });
@@ -260,24 +454,122 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     });
   }
 
-  void _onLike() {
+  void _onLike() async {
+    if (profiles.isEmpty) return;
+    
+    final currentProfile = profiles.first;
+    
     setState(() {
       _position = const Offset(150, 0);
     });
+    
+    // Save like to database
+    print('🔵 LIKE BUTTON PRESSED for: ${currentProfile.name}');
+    try {
+      final supabase = Supabase.instance.client;
+      final userId = supabase.auth.currentUser?.id;
+      
+      if (userId != null) {
+        // 1. Check if the other person already liked me (Reciprocal Like)
+        final reciprocalLike = await supabase
+            .from('likes')
+            .select()
+            .eq('liker_id', currentProfile.id)
+            .eq('liked_id', userId)
+            .maybeSingle();
+
+        // 2. Save my like
+        await supabase.from('likes').insert({
+          'liker_id': userId,
+          'liked_id': currentProfile.id,
+        });
+        print('✅ Like saved successfully');
+
+        // 3. If they liked me, IT'S A MATCH!
+        if (reciprocalLike != null) {
+          print('💖 IT\'S A MATCH!');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('DEU MATCH com ${currentProfile.name}! ❤️'),
+                backgroundColor: Colors.pinkAccent,
+                duration: const Duration(seconds: 4),
+                action: SnackBarAction(
+                  label: 'MENSAGENS',
+                  textColor: Colors.white,
+                  onPressed: () {
+                    setState(() => _selectedIndex = 1); // Vai para aba de chat
+                  },
+                ),
+              ),
+            );
+          }
+          
+          // Clear matches cache to show the new match immediately in the other tab
+          _interestFutures.remove('mutuos');
+        }
+      }
+    } catch (e) {
+      print('❌ ERROR saving like: $e');
+    }
+    
     _animateAndRemove(SwipeStatus.like);
   }
 
-  void _onDislike() {
+  void _onDislike() async {
+    if (profiles.isEmpty) return;
+    
+    final currentProfile = profiles.first;
+    
     setState(() {
       _position = const Offset(-150, 0);
     });
+    
+    // Save pass to database
+    print('🔴 DISLIKE BUTTON PRESSED for: ${currentProfile.name}');
+    try {
+      final supabase = Supabase.instance.client;
+      final userId = supabase.auth.currentUser?.id;
+      
+      if (userId != null) {
+        await supabase.from('passes').insert({
+          'user_id': userId,
+          'passed_id': currentProfile.id,
+        });
+        print('✅ Pass saved successfully: $userId -> ${currentProfile.id}');
+      }
+    } catch (e) {
+      print('❌ ERROR saving pass: $e');
+    }
+    
     _animateAndRemove(SwipeStatus.dislike);
   }
 
-  void _onSuperLike() {
+  void _onSuperLike() async {
+    if (profiles.isEmpty) return;
+    
+    final currentProfile = profiles.first;
+    
     setState(() {
       _position = const Offset(0, -150);
     });
+    
+    // Save super like to database
+    print('⭐ SUPER LIKE BUTTON PRESSED for: ${currentProfile.name}');
+    try {
+      final supabase = Supabase.instance.client;
+      final userId = supabase.auth.currentUser?.id;
+      
+      if (userId != null) {
+        await supabase.from('super_likes').insert({
+          'liker_id': userId,
+          'liked_id': currentProfile.id,
+        });
+        print('✅ Super like saved successfully: $userId -> ${currentProfile.id}');
+      }
+    } catch (e) {
+      print('❌ ERROR saving super like: $e');
+    }
     
     final animation = Tween<Offset>(
       begin: _position,
@@ -414,9 +706,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       ),
       child: Stack(
         children: [
-          profiles.isEmpty
-              ? _buildEmptyState()
-              : _buildCardStack(),
+          _isLoading 
+              ? const Center(child: CircularProgressIndicator(valueColor: AlwaysStoppedAnimation(Colors.white)))
+              : profiles.isEmpty
+                  ? _buildEmptyState()
+                  : _buildCardStack(),
         ],
       ),
     );
@@ -461,107 +755,272 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildInterestGrid({required String status}) {
-    // Filtrando ou criando dados fictícios baseados no status
-    // Na prática viria do backend. Usando sampleProfiles para demo.
-    final List<Profile> displayProfiles = List.from(sampleProfiles)..shuffle();
-    final bool isMutuo = status == 'mutuos';
-    final bool isSuper = status == 'super';
+    // Check if we already have a future for this tab, if not create one
+    _interestFutures[status] ??= _fetchInterestProfiles(status);
 
-    if (displayProfiles.isEmpty) {
-      return const Center(child: Text('Nenhum interesse ainda.'));
-    }
-
-    return GridView.builder(
-      padding: const EdgeInsets.all(10),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2, // 2 colunas
-        childAspectRatio: 0.75, // Altura > Largura (Retrato)
-        crossAxisSpacing: 10,
-        mainAxisSpacing: 10,
-      ),
-      itemCount: displayProfiles.length,
-      itemBuilder: (context, index) {
-        final profile = displayProfiles[index];
-        return Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(15),
-            color: Colors.grey[200],
-            image: DecorationImage(
-              image: NetworkImage(profile.imageUrls.first),
-              fit: BoxFit.cover,
-            ),
-          ),
-          child: Stack(
-            children: [
-              // Gradiente para texto
-              Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(15),
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [Colors.transparent, Colors.black.withOpacity(0.8)],
-                    stops: const [0.6, 1.0],
-                  ),
+    return FutureBuilder<List<Profile>>(
+      future: _interestFutures[status],
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        
+        if (snapshot.hasError) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.error_outline, color: Colors.red, size: 60),
+                const SizedBox(height: 16),
+                Text('Erro ao carregar: ${snapshot.error}'),
+                TextButton(
+                  onPressed: () => _refreshInterestTab(status),
+                  child: const Text('Tentar novamente'),
                 ),
-              ),
-              
-              // Nome e Idade
-              Positioned(
-                bottom: 10,
-                left: 10,
-                right: 10,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
+              ],
+            ),
+          );
+        }
+        
+        final interestProfiles = snapshot.data ?? [];
+        
+        if (interestProfiles.isEmpty) {
+          return RefreshIndicator(
+            onRefresh: () => _refreshInterestTab(status),
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              children: [
+                SizedBox(
+                  height: MediaQuery.of(context).size.height * 0.6,
+                  child: Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Flexible(
-                          child: Text(
-                            profile.name,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                            ),
-                            overflow: TextOverflow.ellipsis,
+                        Icon(
+                          status == 'recebidos' ? Icons.favorite_border :
+                          status == 'mutuos' ? Icons.favorite :
+                          Icons.star_border,
+                          size: 80,
+                          color: Colors.grey[300],
+                        ),
+                        const SizedBox(height: 20),
+                        Text(
+                          status == 'recebidos' ? 'Nenhuma curtida recebida ainda' :
+                          status == 'mutuos' ? 'Nenhum match ainda' :
+                          'Nenhum super like recebido',
+                          style: TextStyle(
+                            fontSize: 18,
+                            color: Colors.grey[600],
+                            fontWeight: FontWeight.w500,
                           ),
                         ),
-                        if (isMutuo) ...[
-                          const SizedBox(width: 4),
-                          const Icon(Icons.favorite, color: Colors.greenAccent, size: 14)
-                        ]
+                        const SizedBox(height: 10),
+                        Text(
+                          'Continue deslizando para encontrar alguém especial!',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.grey[400],
+                          ),
+                        ),
                       ],
                     ),
-                    Text(
-                      '${profile.age} anos',
-                      style: const TextStyle(color: Colors.white70, fontSize: 12),
-                    ),
-                  ],
-                ),
-              ),
-
-              // Badges (Super Like, Novo)
-              if (isSuper)
-                Positioned(
-                  top: 8,
-                  right: 8,
-                  child: Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: const BoxDecoration(
-                      color: Colors.blue,
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(Icons.star, color: Colors.white, size: 16),
                   ),
                 ),
-                
-              // Efeito Blur se for "Recebidos" (Premium feature comum) - opcional, vou deixar visível por enquanto
-              // Mas poderia ser blurado para instigar assinatura.
-            ],
+              ],
+            ),
+          );
+        }
+        
+        return RefreshIndicator(
+          onRefresh: () => _refreshInterestTab(status),
+          child: GridView.builder(
+            padding: const EdgeInsets.all(16),
+            physics: const AlwaysScrollableScrollPhysics(),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 2,
+              childAspectRatio: 0.75,
+              crossAxisSpacing: 16,
+              mainAxisSpacing: 16,
+            ),
+            itemCount: interestProfiles.length,
+            itemBuilder: (context, index) {
+              final profile = interestProfiles[index];
+              return _buildInterestCard(profile, status);
+            },
           ),
         );
       },
+    );
+  }
+
+  Future<void> _refreshInterestTab(String status) async {
+    setState(() {
+      _interestFutures[status] = _fetchInterestProfiles(status);
+    });
+    await _interestFutures[status];
+  }
+  
+  Future<List<Profile>> _fetchInterestProfiles(String status) async {
+    print('🔍 Fetching interest profiles for status: $status');
+    try {
+      final supabase = Supabase.instance.client;
+      final userId = supabase.auth.currentUser?.id;
+      
+      if (userId == null) return [];
+      
+      List<Profile> profiles = [];
+      
+      if (status == 'recebidos') {
+        // Single query with join
+        final data = await supabase
+            .from('likes')
+            .select('liker_id, sender:profiles!likes_liker_id_fkey(*)')
+            .eq('liked_id', userId);
+        
+        for (var item in data) {
+          final profileData = item['sender'];
+          if (profileData != null) {
+            profiles.add(_mapProfile(profileData));
+          }
+        }
+            
+      } else if (status == 'mutuos') {
+        // Single query with joins for both potential sides
+        final data = await supabase
+            .from('matches')
+            .select('user1_id, user2_id, p1:profiles!matches_user1_id_fkey(*), p2:profiles!matches_user2_id_fkey(*)')
+            .or('user1_id.eq.$userId,user2_id.eq.$userId');
+        
+        for (var item in data) {
+          final profileData = item['user1_id'] == userId ? item['p2'] : item['p1'];
+          if (profileData != null) {
+            profiles.add(_mapProfile(profileData));
+          }
+        }
+            
+      } else if (status == 'super') {
+        // Single query with join
+        final data = await supabase
+            .from('super_likes')
+            .select('liker_id, sender:profiles!super_likes_liker_id_fkey(*)')
+            .eq('liked_id', userId);
+        
+        for (var item in data) {
+          final profileData = item['sender'];
+          if (profileData != null) {
+            profiles.add(_mapProfile(profileData));
+          }
+        }
+      }
+      
+      print('✅ Loaded ${profiles.length} profiles for $status');
+      return profiles;
+    } catch (e) {
+      print('❌ Error in _fetchInterestProfiles ($status): $e');
+      return [];
+    }
+  }
+
+  Profile _mapProfile(Map<String, dynamic> data) {
+    return Profile(
+      id: data['id'],
+      name: data['name'] ?? 'Usuário',
+      age: data['age'] ?? 0,
+      gender: data['gender'],
+      imageUrls: List<String>.from(data['image_urls'] ?? []),
+      bio: data['bio'] ?? '',
+      church: data['church'] ?? '',
+      ministry: data['ministry'],
+      faith: data['faith'],
+      city: data['city'] ?? '',
+      interests: List<String>.from(data['interests'] ?? []),
+      latitude: data['latitude']?.toDouble(),
+      longitude: data['longitude']?.toDouble(),
+    );
+  }
+
+  Widget _buildInterestCard(Profile profile, String status) {
+    final bool isMutuo = status == 'mutuos';
+    final bool isSuper = status == 'super';
+
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(15),
+        color: Colors.grey[200],
+        image: DecorationImage(
+          image: NetworkImage(profile.imageUrls.isNotEmpty ? profile.imageUrls.first : 'https://via.placeholder.com/150'),
+          fit: BoxFit.cover,
+          onError: (exception, stackTrace) {
+            print('Error loading image: $exception');
+          },
+        ),
+      ),
+      child: Stack(
+        children: [
+          // Gradiente para texto
+          Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(15),
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Colors.transparent, Colors.black.withOpacity(0.8)],
+                stops: const [0.6, 1.0],
+              ),
+            ),
+          ),
+          
+          // Nome e Idade
+          Positioned(
+            bottom: 10,
+            left: 10,
+            right: 10,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        profile.name,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (isMutuo) ...[
+                      const SizedBox(width: 4),
+                      const Icon(Icons.favorite, color: Colors.greenAccent, size: 14)
+                    ]
+                  ],
+                ),
+                Text(
+                  '${profile.age} anos',
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+
+          // Badges (Super Like)
+          if (isSuper)
+            Positioned(
+              top: 8,
+              right: 8,
+              child: Container(
+                padding: const EdgeInsets.all(6),
+                decoration: const BoxDecoration(
+                  color: Colors.blue,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.star, color: Colors.white, size: 16),
+              ),
+            ),
+        ],
+      ),
     );
   }
 
@@ -741,6 +1200,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       if (userId == null) return null;
       
       final data = await supabase.from('profiles').select().eq('id', userId).maybeSingle();
+      
+      print('DEBUG: Perfil carregado: ${data?['name']}'); // DEBUG
+      print('DEBUG: Imagens no banco: ${data?['image_urls']}'); // DEBUG
+      
       if (data == null) return null;
       
       // Parse Imagens
@@ -748,6 +1211,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       if (data['image_urls'] != null) {
         images = List<String>.from(data['image_urls']);
       }
+      print('DEBUG: Lista de imagens processada: $images'); // DEBUG
       
       return Profile(
         id: data['id'],
@@ -1449,15 +1913,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           const SizedBox(height: 30),
           ElevatedButton(
             onPressed: () {
-              setState(() {
-                profiles = List.from(sampleProfiles);
-              });
+              _fetchProfiles(); // Buscar novos perfis
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.white,
               foregroundColor: const Color(0xFF764ba2),
             ),
-            child: const Text('Recarregar'),
+            child: const Text('Buscar Novamente'),
           ),
         ],
       ),
@@ -1470,13 +1932,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
-          // Botão Voltar
+          // Botão Refresh (Recarregar perfis)
           _buildCircleButton(
             icon: Icons.refresh,
             color: Colors.amber,
             size: 50,
             iconSize: 24,
-            onPressed: () {},
+            onPressed: () {
+              _fetchProfiles(); // Buscar novos perfis
+            },
           ),
           // Botão Dislike
           _buildCircleButton(
@@ -1561,7 +2025,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   // -- NOVA ABA: CONFIGURAÇÕES --
   Widget _buildSettingsTab() {
     return Scaffold(
-      backgroundColor: Colors.grey[50], // Fundo levemente cinza
+      backgroundColor: Colors.grey[50],
       body: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1569,7 +2033,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             Padding(
               padding: const EdgeInsets.all(20.0),
               child: Text(
-                'Configurações',
+                'Preferências de Busca',
                 style: TextStyle(
                   fontSize: 28,
                   fontWeight: FontWeight.bold,
@@ -1579,40 +2043,323 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             ),
             Expanded(
               child: ListView(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
                 children: [
-                  _buildSectionHeader('Conta'),
-                  _buildSettingsTile(Icons.phone, 'Número de Telefone'),
-                  _buildSettingsTile(Icons.email, 'Email Conectado'),
-                  _buildSectionHeader('Preferências'),
-                  _buildSettingsTile(Icons.location_on, 'Localização'),
-                  _buildSettingsTile(Icons.notifications, 'Notificações', hasSwitch: true),
-                  _buildSettingsTile(Icons.visibility, 'Mostrar-me no Par Cristão', hasSwitch: true),
-                  _buildSectionHeader('Legal'),
-                  _buildSettingsTile(Icons.description, 'Termos de Serviço'),
-                  _buildSettingsTile(Icons.privacy_tip, 'Política de Privacidade'),
-                  const SizedBox(height: 30),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    child: ElevatedButton(
-                      onPressed: () {},
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.white,
-                        foregroundColor: Colors.red,
-                        elevation: 0,
-                        side: const BorderSide(color: Colors.red),
-                        padding: const EdgeInsets.symmetric(vertical: 15),
+                  // Location Banner (if not enabled)
+                  if (!_isCheckingLocation && !_hasLocation) ...[
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [Colors.orange.shade400, Colors.deepOrange.shade400],
+                        ),
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.orange.withOpacity(0.3),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
                       ),
-                      child: const Text('Sair da Conta'),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.location_off, color: Colors.white, size: 32),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Localização Desativada',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Ative para ver perfis mais próximos',
+                                  style: TextStyle(
+                                    color: Colors.white.withOpacity(0.9),
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                            onPressed: _enableLocationFromSettings,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.white,
+                              foregroundColor: Colors.orange.shade700,
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                            child: const Text(
+                              'Ativar',
+                              style: TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                  ],
+                  
+                  // Search Radius Slider
+                  _buildSectionHeader('Raio de Busca'),
+                  const SizedBox(height: 10),
+                  Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(15),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.05),
+                          blurRadius: 10,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text(
+                              'Distância máxima',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            Text(
+                              '${_searchRadius.round()} km',
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF667eea),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        Slider(
+                          value: _searchRadius,
+                          min: 50,
+                          max: 500,
+                          divisions: 45,
+                          activeColor: const Color(0xFF667eea),
+                          inactiveColor: Colors.grey[300],
+                          onChanged: (value) {
+                            setState(() => _searchRadius = value);
+                          },
+                          onChangeEnd: (value) {
+                            _saveSearchPreferences();
+                          },
+                        ),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text('50 km', style: TextStyle(color: Colors.grey[600], fontSize: 12)),
+                            Text('500 km', style: TextStyle(color: Colors.grey[600], fontSize: 12)),
+                          ],
+                        ),
+                      ],
                     ),
                   ),
+                  
                   const SizedBox(height: 30),
-                  const Center(
-                    child: Text(
-                      'Versão 1.0.0',
-                      style: TextStyle(color: Colors.grey),
+                  
+                  // Age Range Slider
+                  _buildSectionHeader('Faixa Etária'),
+                  const SizedBox(height: 10),
+                  Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(15),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.05),
+                          blurRadius: 10,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text(
+                              'Idade',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            Text(
+                              '${_ageRange.start.round()} - ${_ageRange.end.round()} anos',
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF667eea),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        RangeSlider(
+                          values: _ageRange,
+                          min: 18,
+                          max: 75,
+                          divisions: 57,
+                          activeColor: const Color(0xFF667eea),
+                          inactiveColor: Colors.grey[300],
+                          labels: RangeLabels(
+                            _ageRange.start.round().toString(),
+                            _ageRange.end.round().toString(),
+                          ),
+                          onChanged: (values) {
+                            setState(() => _ageRange = values);
+                          },
+                          onChangeEnd: (values) {
+                            _saveSearchPreferences();
+                          },
+                        ),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text('18 anos', style: TextStyle(color: Colors.grey[600], fontSize: 12)),
+                            Text('75 anos', style: TextStyle(color: Colors.grey[600], fontSize: 12)),
+                          ],
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(height: 20),
+                  
+                  const SizedBox(height: 30),
+                  
+                  // Religion Filters
+                  _buildSectionHeader('Religiões'),
+                  const SizedBox(height: 10),
+                  Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(15),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.05),
+                          blurRadius: 10,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      children: [
+                        _buildReligionCheckbox('Católica'),
+                        _buildReligionCheckbox('Evangélica'),
+                        _buildReligionCheckbox('Ortodoxa'),
+                        _buildReligionCheckbox('Outras denominações cristãs'),
+                      ],
+                    ),
+                  ),
+                  
+                  const SizedBox(height: 30),
+                  
+                  // Recalcular Localização Button
+                  _buildSectionHeader('Localização'),
+                  const SizedBox(height: 10),
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(15),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.05),
+                          blurRadius: 10,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.my_location, color: const Color(0xFF667eea), size: 20),
+                            const SizedBox(width: 8),
+                            const Expanded(
+                              child: Text(
+                                'Viajando? Atualize sua localização',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        ElevatedButton.icon(
+                          onPressed: _enableLocationFromSettings,
+                          icon: const Icon(Icons.refresh_rounded, size: 18),
+                          label: const Text('Recalcular Localização'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF667eea),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            minimumSize: const Size(double.infinity, 44),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  
+                  const SizedBox(height: 30),
+                  
+                  // Ver Perfis Rejeitados Button
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 0),
+                    child: ElevatedButton.icon(
+                      onPressed: () {
+                        // TODO: Implementar lógica para mostrar perfis rejeitados
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Funcionalidade em desenvolvimento'),
+                            backgroundColor: Color(0xFF667eea),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.refresh, size: 20),
+                      label: const Text('Ver Novamente Perfis Rejeitados'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF667eea),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        elevation: 2,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                  ),
+                  
+                  const SizedBox(height: 40),
                 ],
               ),
             ),
@@ -1621,6 +2368,182 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       ),
     );
   }
+  
+  Widget _buildReligionCheckbox(String religion) {
+    final isSelected = _religionFilters.contains(religion);
+    return InkWell(
+      onTap: () {
+        setState(() {
+          if (isSelected) {
+            _religionFilters.remove(religion);
+          } else {
+            _religionFilters.add(religion);
+          }
+        });
+        _saveSearchPreferences();
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: Row(
+          children: [
+            Container(
+              width: 24,
+              height: 24,
+              decoration: BoxDecoration(
+                color: isSelected ? const Color(0xFF667eea) : Colors.transparent,
+                border: Border.all(
+                  color: isSelected ? const Color(0xFF667eea) : Colors.grey[400]!,
+                  width: 2,
+                ),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: isSelected
+                  ? const Icon(Icons.check, size: 16, color: Colors.white)
+                  : null,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                religion,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                  color: isSelected ? Colors.black87 : Colors.grey[700],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  Future<void> _saveSearchPreferences() async {
+    try {
+      final supabase = Supabase.instance.client;
+      final userId = supabase.auth.currentUser?.id;
+      
+      if (userId == null) return;
+      
+      await supabase.from('profiles').update({
+        'search_radius': _searchRadius.round(),
+        'age_min': _ageRange.start.round(),
+        'age_max': _ageRange.end.round(),
+        'religion_filters': _religionFilters.toList(),
+      }).eq('id', userId);
+      
+      print('Preferências salvas: Raio=${_searchRadius}km, Idade=${_ageRange.start}-${_ageRange.end}, Religiões=$_religionFilters');
+    } catch (e) {
+      print('Erro ao salvar preferências: $e');
+    }
+  }
+  
+  Future<void> _checkUserLocation() async {
+    try {
+      final supabase = Supabase.instance.client;
+      final userId = supabase.auth.currentUser?.id;
+      
+      if (userId == null) {
+        setState(() => _isCheckingLocation = false);
+        return;
+      }
+      
+      final response = await supabase
+          .from('profiles')
+          .select('latitude, longitude')
+          .eq('id', userId)
+          .maybeSingle();
+      
+      if (response != null) {
+        final lat = response['latitude'];
+        final lng = response['longitude'];
+        setState(() {
+          _hasLocation = (lat != null && lng != null);
+          _isCheckingLocation = false;
+        });
+      } else {
+        setState(() => _isCheckingLocation = false);
+      }
+    } catch (e) {
+      print('Erro ao verificar localização: $e');
+      setState(() => _isCheckingLocation = false);
+    }
+  }
+  
+  Future<void> _enableLocationFromSettings() async {
+    try {
+      // Check if location services are enabled
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Serviços de localização desativados. Ative nas configurações do dispositivo.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+      
+      // Check permission
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Permissão de localização negada.'),
+              backgroundColor: Colors.red,
+            ),
+          );
+          return;
+        }
+      }
+      
+      if (permission == LocationPermission.deniedForever) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Permissão negada permanentemente. Ative nas configurações do dispositivo.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+      
+      // Get position
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+      
+      // Save to database
+      final supabase = Supabase.instance.client;
+      final userId = supabase.auth.currentUser?.id;
+      
+      if (userId != null) {
+        await supabase.from('profiles').update({
+          'latitude': position.latitude,
+          'longitude': position.longitude,
+        }).eq('id', userId);
+        
+        setState(() => _hasLocation = true);
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✓ Localização ativada com sucesso!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      print('Erro ao ativar localização: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Erro ao ativar localização: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
   
   Widget _buildSectionHeader(String title) {
     return Padding(
@@ -1704,14 +2627,16 @@ class _ProfileCardState extends State<ProfileCard> {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            // Imagem de fundo
-             Image.network(
+            // Imagem de fundo (com fallback para lista vazia)
+            if (widget.profile.imageUrls.isNotEmpty)
+              Image.network(
                 widget.profile.imageUrls[_currentImageIndex],
                 fit: BoxFit.cover,
                 errorBuilder: (context, error, stackTrace) {
+                  print('Erro ao carregar imagem: $error');
                   return Container(
                     color: Colors.grey[800],
-                    child: const Icon(Icons.person, size: 100, color: Colors.grey),
+                    child: const Center(child: Icon(Icons.broken_image, size: 100, color: Colors.grey)),
                   );
                 },
                 loadingBuilder: (context, child, loadingProgress) {
@@ -1726,6 +2651,20 @@ class _ProfileCardState extends State<ProfileCard> {
                     ),
                   );
                 },
+              )
+            else
+              Container(
+                color: Colors.grey[800],
+                child: const Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.photo_camera_outlined, size: 80, color: Colors.grey),
+                      SizedBox(height: 16),
+                      Text('Sem foto', style: TextStyle(color: Colors.grey, fontSize: 16)),
+                    ],
+                  ),
+                ),
               ),
 
             // Gradiente Escuro

@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:novo_app/main.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:novo_app/auth_screen.dart';
+import 'package:geolocator/geolocator.dart';
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
@@ -58,6 +59,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
   // Photos
   final ImagePicker _picker = ImagePicker();
   List<XFile> _selectedImages = [];
+  
+  // Location
+  double? _latitude;
+  double? _longitude;
+  bool _useManualLocation = false;
+  bool _isLoadingLocation = false;
 
   Future<void> _pickImage() async {
     try {
@@ -263,28 +270,39 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
       // 2. Upload de Fotos
       List<String> uploadedImageUrls = [];
       for (var i = 0; i < _selectedImages.length; i++) {
-         final imageFile = File(_selectedImages[i].path);
-         final fileExt = imageFile.path.split('.').last;
-         final fileName = '$userId/${DateTime.now().millisecondsSinceEpoch}_$i.$fileExt';
-         
          try {
-           // Tenta upload
-           final storageResponse = await supabase.storage.from('profile-photos').upload(
+           final imageFile = _selectedImages[i];
+           // Use name to safely get extension on Web (avoid blob: paths)
+           final fileExt = imageFile.name.split('.').last; 
+           final fileName = '$userId/${DateTime.now().millisecondsSinceEpoch}_$i.$fileExt';
+           
+           print('Iniciando upload da imagem $i: $fileName');
+           
+           // Use uploadBinary for Web/Mobile compatibility
+           final bytes = await imageFile.readAsBytes();
+           
+           await supabase.storage.from('profile-photos').uploadBinary(
              fileName,
-             imageFile,
-             fileOptions: const FileOptions(cacheControl: '3600', upsert: false),
+             bytes,
+             fileOptions: const FileOptions(
+               cacheControl: '3600', 
+               upsert: false,
+             ),
            );
            
            // Pega URL pública
            final imageUrl = supabase.storage.from('profile-photos').getPublicUrl(fileName);
+           print('Upload sucesso. URL gerada: $imageUrl');
+           
            uploadedImageUrls.add(imageUrl);
 
          } catch (e) {
-            print("Erro ao subir imagem $i: $e");
-            // Se der erro no upload, ignora essa imagem e segue (ou poderia travar)
-            // Aqui vamos logar e continuar
+            print("ERRO CRÍTICO no upload da imagem $i: $e");
+            // Se der erro no upload, ignora essa imagem e segue
          }
       }
+      
+      print('URLs finais para salvar: $uploadedImageUrls');
 
       // 3. Salvar Perfil
       await supabase.from('profiles').upsert({
@@ -299,6 +317,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
         'church': _churchController.text,
         'ministry': _selectedMinistry,
         'image_urls': uploadedImageUrls, // Salva URLs das fotos
+        'latitude': _latitude, // Salva coordenadas GPS (se permitido)
+        'longitude': _longitude,
         'updated_at': DateTime.now().toIso8601String(),
       });
 
@@ -940,57 +960,222 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
   }
 
   Widget _buildLocationStep() {
+    if (_useManualLocation || _latitude != null) {
+      // Show manual input fields if user chose manual or already has GPS
+      return SingleChildScrollView(
+        child: _buildPremiumCard(
+          icon: Icons.location_on_outlined,
+          title: _latitude != null ? 'Localização Confirmada' : 'Localização Manual',
+          subtitle: _latitude != null ? 'GPS ativado com sucesso!' : 'Digite sua localização',
+          children: [
+            if (_latitude != null) ...[
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.green.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.green.withOpacity(0.3)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.check_circle, color: Colors.green, size: 24),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'Sua localização foi detectada automaticamente. Isso nos ajuda a mostrar perfis próximos de você!',
+                        style: TextStyle(color: Colors.green[800], fontSize: 14),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+            ],
+            
+            _buildPremiumInputLabel('Cidade'),
+            _buildPremiumTextField(_cityController, 'Ex: São Paulo', Icons.location_city_outlined),
+            const SizedBox(height: 24),
+            
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildPremiumInputLabel('Estado'),
+                      _buildPremiumDropdown<String>(
+                        value: _selectedState,
+                        hint: 'UF',
+                        icon: Icons.map_outlined,
+                        items: ['SP', 'RJ', 'MG', 'PR', 'RS', 'SC', 'BA', 'PE', 'CE', 'GO', 'DF'],
+                        onChanged: (v) => setState(() => _selectedState = v!),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildPremiumInputLabel('País'),
+                      _buildPremiumDropdown<String>(
+                        value: _selectedCountry,
+                        hint: 'País',
+                        icon: Icons.public_outlined,
+                        items: ['Brasil'],
+                        onChanged: (v) => setState(() => _selectedCountry = v!),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            
+            const SizedBox(height: 36),
+            _buildContinueButton('Continuar', _nextPage),
+          ],
+        ),
+      );
+    }
+    
+    // Initial GPS permission screen
     return SingleChildScrollView(
       child: _buildPremiumCard(
-        icon: Icons.location_on_outlined,
-        title: 'Localização',
-        subtitle: 'Onde você está?',
+        icon: Icons.my_location,
+        title: 'Encontre pessoas perto de você',
+        subtitle: 'Como você prefere compartilhar sua localização?',
         children: [
-          _buildPremiumInputLabel('Cidade'),
-          _buildPremiumTextField(_cityController, 'Ex: São Paulo', Icons.location_city_outlined),
-          const SizedBox(height: 24),
-          
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _buildPremiumInputLabel('Estado'),
-                    _buildPremiumDropdown<String>(
-                      value: _selectedState,
-                      hint: 'UF',
-                      icon: Icons.map_outlined,
-                      items: ['SP', 'RJ', 'MG', 'PR', 'RS', 'SC', 'BA', 'PE', 'CE', 'GO', 'DF'],
-                      onChanged: (v) => setState(() => _selectedState = v!),
-                    ),
-                  ],
-                ),
+          // Explanation
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [_primaryColor.withOpacity(0.1), _secondaryColor.withOpacity(0.05)],
               ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _buildPremiumInputLabel('País'),
-                    _buildPremiumDropdown<String>(
-                      value: _selectedCountry,
-                      hint: 'País',
-                      icon: Icons.public_outlined,
-                      items: ['Brasil'],
-                      onChanged: (v) => setState(() => _selectedCountry = v!),
-                    ),
-                  ],
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.info_outline, color: _primaryColor, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Usamos sua localização apenas para mostrar perfis próximos.',
+                    style: TextStyle(color: Colors.grey[700], fontSize: 13, height: 1.3),
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
           
-          const SizedBox(height: 36),
-          _buildContinueButton('Continuar', _nextPage),
+          const SizedBox(height: 20),
+          
+          // GPS Button
+          _isLoadingLocation
+              ? const Center(child: CircularProgressIndicator())
+              : ElevatedButton.icon(
+                  onPressed: _requestLocationPermission,
+                  icon: const Icon(Icons.gps_fixed, size: 22),
+                  label: const Text('Permitir Localização (GPS)'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _primaryColor,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                    minimumSize: const Size(double.infinity, 50),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+          
+          const SizedBox(height: 12),
+          
+          // Manual Button
+          OutlinedButton.icon(
+            onPressed: () {
+              setState(() => _useManualLocation = true);
+            },
+            icon: Icon(Icons.edit_location_alt, color: _primaryColor, size: 20),
+            label: Text('Digitar Manualmente', style: TextStyle(color: _primaryColor)),
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+              minimumSize: const Size(double.infinity, 50),
+              side: BorderSide(color: _primaryColor, width: 2),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ),
         ],
       ),
     );
+  }
+  
+  Future<void> _requestLocationPermission() async {
+    setState(() => _isLoadingLocation = true);
+    
+    try {
+      // Check if location services are enabled
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        _showError('Serviços de localização desativados. Por favor, ative nas configurações.');
+        setState(() {
+          _isLoadingLocation = false;
+          _useManualLocation = true;
+        });
+        return;
+      }
+      
+      // Check permission
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          _showError('Permissão de localização negada. Você pode digitar manualmente.');
+          setState(() {
+            _isLoadingLocation = false;
+            _useManualLocation = true;
+          });
+          return;
+        }
+      }
+      
+      if (permission == LocationPermission.deniedForever) {
+        _showError('Permissão de localização negada permanentemente. Use a opção manual.');
+        setState(() {
+          _isLoadingLocation = false;
+          _useManualLocation = true;
+        });
+        return;
+      }
+      
+      // Get position
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+      
+      setState(() {
+        _latitude = position.latitude;
+        _longitude = position.longitude;
+        _isLoadingLocation = false;
+      });
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('✓ Localização detectada com sucesso!'),
+          backgroundColor: Colors.green,
+          duration: Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      print('Erro ao obter localização: $e');
+      _showError('Erro ao obter localização. Tente digitar manualmente.');
+      setState(() {
+        _isLoadingLocation = false;
+        _useManualLocation = true;
+      });
+    }
   }
 
   Widget _buildInterestsStep() {
