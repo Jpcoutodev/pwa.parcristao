@@ -870,7 +870,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           ),
                           child: CircleAvatar(
                             radius: 65,
-                            backgroundImage: NetworkImage(myProfile.imageUrls.first),
+                            backgroundImage: NetworkImage(mainImage),
                           ),
                         ),
                         Container(
