@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:novo_app/onboarding_screen.dart';
 
 void main() {
   runApp(const ParCristaoApp());
@@ -17,7 +18,7 @@ class ParCristaoApp extends StatelessWidget {
         fontFamily: 'Roboto',
         scaffoldBackgroundColor: const Color(0xFFF5F5F5),
       ),
-      home: const HomeScreen(),
+      home: const OnboardingScreen(), // Começar pelo onboarding
     );
   }
 }
@@ -27,21 +28,29 @@ class Profile {
   final String id;
   final String name;
   final int age;
+  final String? gender; // Novo: Gênero
   final List<String> imageUrls; // Suporte a múltiplas fotos
   final String bio;
   final String church;
+  final String? ministry; // Novo: Ministério
+  final String? faith; // Novo: Confissão de fé
   final String city;
   final List<String> interests;
+  final bool isOnline;
 
   Profile({
     required this.id,
     required this.name,
     required this.age,
+    this.gender,
     required this.imageUrls,
     required this.bio,
     required this.church,
+    this.ministry,
+    this.faith,
     required this.city,
     required this.interests,
+    this.isOnline = false,
   });
 }
 
@@ -60,6 +69,7 @@ final List<Profile> sampleProfiles = [
     church: 'Igreja Batista Lagoinha',
     city: 'Belo Horizonte, MG',
     interests: ['Música', 'Viagens', 'Café', 'Louvor'],
+    isOnline: true,
   ),
   Profile(
     id: '2',
@@ -73,6 +83,7 @@ final List<Profile> sampleProfiles = [
     church: 'Assembleia de Deus',
     city: 'São Paulo, SP',
     interests: ['Tecnologia', 'Violão', 'Livros', 'Esportes'],
+    isOnline: false,
   ),
   Profile(
     id: '3',
@@ -86,6 +97,7 @@ final List<Profile> sampleProfiles = [
     church: 'Igreja Presbiteriana',
     city: 'Rio de Janeiro, RJ',
     interests: ['Missões', 'Crianças', 'Medicina', 'Praia'],
+    isOnline: true,
   ),
   Profile(
     id: '4',
@@ -713,149 +725,476 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       id: 'me',
       name: 'João',
       age: 28,
-      imageUrls: ['https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?ixlib=rb-4.0.3&auto=format&fit=crop&w=687&q=80', 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?ixlib=rb-4.0.3&auto=format&fit=crop&w=687&q=80'],
-      bio: 'Apaixonado por música e servindo na adoração.\nBusco alguém com os mesmos propósitos.',
-      church: 'Lagoinha',
+      gender: 'Masculino',
+      imageUrls: [
+        'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?ixlib=rb-4.0.3&auto=format&fit=crop&w=687&q=80',
+        'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?ixlib=rb-4.0.3&auto=format&fit=crop&w=687&q=80'
+      ],
+      bio: 'Apaixonado por música e servindo na adoração. Busco alguém com os mesmos propósitos e que ame a Deus acima de tudo.',
+      church: 'Igreja Batista da Lagoinha',
+      ministry: 'Exerço ministério',
+      faith: 'Evangélica',
       city: 'Belo Horizonte, MG',
-      interests: ['Música', 'Café', 'Viagens', 'Teologia'],
+      interests: ['Música', 'Café', 'Viagens', 'Teologia', 'Louvor', 'Leitura'],
     );
 
     return Scaffold(
-      backgroundColor: Colors.grey[50],
+      backgroundColor: const Color(0xFFF8F9FA),
       body: SafeArea(
         child: SingleChildScrollView(
           child: Column(
             children: [
-              const SizedBox(height: 40),
-              // Foto de Perfil
-              Center(
-                child: Stack(
+              // Header com gradiente
+              Container(
+                width: double.infinity,
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [Color(0xFF667eea), Color(0xFF764ba2)],
+                  ),
+                  borderRadius: BorderRadius.only(
+                    bottomLeft: Radius.circular(40),
+                    bottomRight: Radius.circular(40),
+                  ),
+                ),
+                child: Column(
                   children: [
-                    Container(
-                      padding: const EdgeInsets.all(4),
-                      decoration: const BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: LinearGradient(colors: [Color(0xFF667eea), Color(0xFF764ba2)]),
-                      ),
-                      child: CircleAvatar(
-                        radius: 70,
-                        backgroundImage: NetworkImage(myProfile.imageUrls.first),
+                    const SizedBox(height: 20),
+                    
+                    // Título
+                    const Text(
+                      'Meu Perfil',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
-                    Positioned(
-                      bottom: 0,
-                      right: 6,
-                      child: Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          shape: BoxShape.circle,
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.2),
-                              blurRadius: 6,
-                            ),
+                    
+                    const SizedBox(height: 25),
+                    
+                    // Foto de Perfil
+                    Stack(
+                      alignment: Alignment.bottomRight,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 3),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.2),
+                                blurRadius: 20,
+                                offset: const Offset(0, 10),
+                              ),
+                            ],
+                          ),
+                          child: CircleAvatar(
+                            radius: 65,
+                            backgroundImage: NetworkImage(myProfile.imageUrls.first),
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            shape: BoxShape.circle,
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.15),
+                                blurRadius: 8,
+                              ),
+                            ],
+                          ),
+                          child: const Icon(Icons.camera_alt_rounded, color: Color(0xFF667eea), size: 22),
+                        ),
+                      ],
+                    ),
+                    
+                    const SizedBox(height: 18),
+                    
+                    // Nome e Idade
+                    Text(
+                      '${myProfile.name}, ${myProfile.age}',
+                      style: const TextStyle(
+                        fontSize: 26,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                    
+                    const SizedBox(height: 6),
+                    
+                    // Localização
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.location_on_outlined, color: Colors.white.withOpacity(0.9), size: 18),
+                        const SizedBox(width: 4),
+                        Text(
+                          myProfile.city,
+                          style: TextStyle(
+                            fontSize: 15,
+                            color: Colors.white.withOpacity(0.9),
+                          ),
+                        ),
+                      ],
+                    ),
+                    
+                    const SizedBox(height: 25),
+                    
+                    // Botões de Ação
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        _buildProfileHeaderButton(
+                          Icons.edit_outlined,
+                          'Editar',
+                          () {
+                            print('Editar perfil');
+                          },
+                        ),
+                        const SizedBox(width: 20),
+                        _buildProfileHeaderButton(
+                          Icons.visibility_outlined,
+                          'Visualizar',
+                          () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => ProfileDetailScreen(profile: myProfile),
+                              ),
+                            );
+                          },
+                        ),
+                        const SizedBox(width: 20),
+                        _buildProfileHeaderButton(
+                          Icons.settings_outlined,
+                          'Ajustes',
+                          () {
+                            setState(() => _selectedIndex = 4);
+                          },
+                        ),
+                      ],
+                    ),
+                    
+                    const SizedBox(height: 30),
+                  ],
+                ),
+              ),
+              
+              const SizedBox(height: 20),
+              
+              // Seção: Sobre Mim
+              _buildProfileSection(
+                icon: Icons.person_outline_rounded,
+                title: 'Sobre Mim',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      myProfile.bio,
+                      style: TextStyle(
+                        fontSize: 15,
+                        color: Colors.grey[700],
+                        height: 1.5,
+                      ),
+                    ),
+                    if (myProfile.gender != null) ...[
+                      const SizedBox(height: 16),
+                      _buildProfileInfoRow(Icons.wc_outlined, 'Gênero', myProfile.gender!),
+                    ],
+                  ],
+                ),
+              ),
+              
+              // Seção: Igreja e Fé
+              _buildProfileSection(
+                icon: Icons.church_outlined,
+                title: 'Igreja e Fé',
+                child: Column(
+                  children: [
+                    _buildProfileInfoRow(Icons.home_outlined, 'Igreja', myProfile.church),
+                    if (myProfile.faith != null) ...[
+                      const SizedBox(height: 14),
+                      _buildProfileInfoRow(Icons.auto_awesome_outlined, 'Confissão', myProfile.faith!),
+                    ],
+                    if (myProfile.ministry != null) ...[
+                      const SizedBox(height: 14),
+                      _buildProfileInfoRow(Icons.volunteer_activism_outlined, 'Participação', myProfile.ministry!),
+                    ],
+                  ],
+                ),
+              ),
+              
+              // Seção: Interesses
+              _buildProfileSection(
+                icon: Icons.interests_outlined,
+                title: 'Interesses',
+                child: Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: myProfile.interests.map((interest) {
+                    return Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [
+                            const Color(0xFF667eea).withOpacity(0.1),
+                            const Color(0xFF764ba2).withOpacity(0.05),
                           ],
                         ),
-                        child: const Icon(Icons.camera_alt, color: Color(0xFF667eea), size: 22),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: const Color(0xFF667eea).withOpacity(0.3),
+                        ),
                       ),
-                    ),
-                  ],
+                      child: Text(
+                        interest,
+                        style: const TextStyle(
+                          color: Color(0xFF667eea),
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                        ),
+                      ),
+                    );
+                  }).toList(),
                 ),
               ),
-              
-              const SizedBox(height: 15),
-              
-              Text(
-                '${myProfile.name}, ${myProfile.age}',
-                style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: Colors.black87),
-              ),
-              Text(
-                myProfile.city,
-                style: TextStyle(fontSize: 16, color: Colors.grey[600]),
-              ),
-              
-              const SizedBox(height: 30),
-              
-              // Botões de Ação
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    _buildProfileActionButton(
-                      Icons.edit,
-                      'Editar Perfil',
-                      Colors.grey[200]!,
-                      Colors.black87,
-                      () {
-                        // Ação de editar
-                        print('Editar perfil');
-                      },
-                    ),
-                    _buildProfileActionButton(
-                      Icons.visibility,
-                      'Visualizar',
-                      const Color(0xFF667eea).withOpacity(0.1),
-                      const Color(0xFF667eea),
-                      () {
-                        // Navegar para ver como os outros veem
-                         Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => ProfileDetailScreen(profile: myProfile),
-                          ),
-                        );
-                      },
-                    ),
-                  ],
-                ),
-              ),
-              
-              const SizedBox(height: 40),
               
               // Card Premium
               Container(
                 margin: const EdgeInsets.symmetric(horizontal: 20),
-                padding: const EdgeInsets.all(25),
+                padding: const EdgeInsets.all(24),
                 decoration: BoxDecoration(
-                  gradient: const LinearGradient(colors: [Color(0xFFDA4453), Color(0xFF89216B)]),
-                  borderRadius: BorderRadius.circular(20),
+                  gradient: const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [Color(0xFFf5af19), Color(0xFFf12711)],
+                  ),
+                  borderRadius: BorderRadius.circular(24),
                   boxShadow: [
                     BoxShadow(
-                      color: const Color(0xFF89216B).withOpacity(0.4),
-                      blurRadius: 15,
-                      offset: const Offset(0, 8),
+                      color: const Color(0xFFf12711).withOpacity(0.3),
+                      blurRadius: 20,
+                      offset: const Offset(0, 10),
                     ),
                   ],
                 ),
                 child: Row(
                   children: [
                     Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: const BoxDecoration(color: Colors.white24, shape: BoxShape.circle),
-                      child: const Icon(Icons.star, color: Colors.white, size: 30),
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: const Icon(Icons.workspace_premium_rounded, color: Colors.white, size: 32),
                     ),
-                    const SizedBox(width: 20),
-                    const Expanded(
+                    const SizedBox(width: 18),
+                    Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('Par Cristão Premium', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
-                          SizedBox(height: 4),
-                          Text('Descubra quem curtiu você e tenha likes ilimitados.', style: TextStyle(color: Colors.white70, fontSize: 13)),
+                          const Text(
+                            'Par Cristão Premium',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 18,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Descubra quem curtiu você!',
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.9),
+                              fontSize: 13,
+                            ),
+                          ),
                         ],
                       ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(Icons.arrow_forward_rounded, color: Color(0xFFf12711), size: 20),
                     ),
                   ],
                 ),
               ),
               
-               const SizedBox(height: 100), // Espaço final
+              const SizedBox(height: 30),
+              
+              // Estatísticas
+              Container(
+                margin: const EdgeInsets.symmetric(horizontal: 20),
+                padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 25),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 15,
+                      offset: const Offset(0, 5),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    _buildProfileStat('Curtidas', '24', Icons.favorite_outline),
+                    Container(width: 1, height: 40, color: Colors.grey[200]),
+                    _buildProfileStat('Matches', '8', Icons.people_outline),
+                    Container(width: 1, height: 40, color: Colors.grey[200]),
+                    _buildProfileStat('Fotos', '${myProfile.imageUrls.length}', Icons.photo_outlined),
+                  ],
+                ),
+              ),
+              
+              const SizedBox(height: 120),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildProfileHeaderButton(IconData icon, String label, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        children: [
+          Container(
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.white.withOpacity(0.3)),
+            ),
+            child: Icon(icon, color: Colors.white, size: 24),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            label,
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.9),
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProfileSection({
+    required IconData icon,
+    required String title,
+    required Widget child,
+  }) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 15,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF667eea), Color(0xFF764ba2)],
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, color: Colors.white, size: 20),
+              ),
+              const SizedBox(width: 14),
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF2D3748),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          child,
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProfileInfoRow(IconData icon, String label, String value) {
+    return Row(
+      children: [
+        Icon(icon, color: const Color(0xFF667eea), size: 20),
+        const SizedBox(width: 12),
+        Text(
+          '$label: ',
+          style: TextStyle(
+            color: Colors.grey[500],
+            fontSize: 14,
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            style: const TextStyle(
+              color: Color(0xFF2D3748),
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildProfileStat(String label, String value, IconData icon) {
+    return Column(
+      children: [
+        Icon(icon, color: const Color(0xFF667eea), size: 22),
+        const SizedBox(height: 8),
+        Text(
+          value,
+          style: const TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF2D3748),
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            color: Colors.grey[500],
+          ),
+        ),
+      ],
     );
   }
 
@@ -1227,7 +1566,7 @@ class _ProfileCardState extends State<ProfileCard> {
     return Container(
       width: double.infinity,
       height: double.infinity,
-      margin: const EdgeInsets.only(bottom: 20, left: 10, right: 10, top: 10),
+      margin: const EdgeInsets.only(bottom: 20, left: 10, right: 10, top: 25), // Aumentado top margin
       decoration: BoxDecoration(
         color: Colors.black,
         borderRadius: BorderRadius.circular(30),
@@ -1330,10 +1669,37 @@ class _ProfileCardState extends State<ProfileCard> {
               ],
             ),
 
+            // Botão Help no Topo Direito (Movido para cá)
+            Positioned(
+              top: 20, // Espaço do topo
+              right: 20, // Espaço da direita
+              child: GestureDetector(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const TutorialScreen()),
+                  );
+                },
+                child: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.3), // Fundo mais escuro para contraste
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white.withOpacity(0.3), width: 1),
+                  ),
+                  child: const Icon(
+                    Icons.help_outline,
+                    color: Colors.white,
+                    size: 28,
+                  ),
+                ),
+              ),
+            ),
+
             // Informações do Perfil 
             // Usamos IgnorePointer para que os toques passem para as áreas de navegação se não clicar nos botões
             Positioned(
-              bottom: 110,
+              bottom: 120, // Moved up to clear buttons
               left: 20,
               right: 20,
               child: IgnorePointer(
@@ -1342,6 +1708,42 @@ class _ProfileCardState extends State<ProfileCard> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    if (widget.profile.isOnline)
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: Colors.black45,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFF00E676).withOpacity(0.5)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 8,
+                              height: 8,
+                              decoration: const BoxDecoration(
+                                color: Color(0xFF00E676),
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              'ON LINE',
+                              style: TextStyle(
+                                color: const Color(0xFF00E676),
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 1.2,
+                                shadows: [
+                                  Shadow(offset: const Offset(0, 1), blurRadius: 4.0, color: Colors.black.withOpacity(0.5)),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -1376,31 +1778,6 @@ class _ProfileCardState extends State<ProfileCard> {
                       Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          // Botão Info (Tutorial)
-                          GestureDetector(
-                            onTap: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(builder: (context) => const TutorialScreen()),
-                              );
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.all(10),
-                              decoration: BoxDecoration(
-                                color: Colors.white.withOpacity(0.25),
-                                shape: BoxShape.circle,
-                                border: Border.all(color: Colors.white.withOpacity(0.3), width: 1),
-                              ),
-                              child: const Icon(
-                                Icons.info_outline,
-                                color: Colors.white,
-                                size: 28,
-                              ),
-                            ),
-                          ),
-                          
-                          const SizedBox(height: 15),
-
                           // Botão Olho (Ver Perfil Completo)
                           GestureDetector(
                             onTap: () async {
@@ -1413,7 +1790,6 @@ class _ProfileCardState extends State<ProfileCard> {
                               
                               if (result != null) {
                                 print('Ação retornada do detalhe: $result');
-                                // Futuramente conectar com callback de swipe
                               }
                             },
                             child: Container(
@@ -1435,11 +1811,11 @@ class _ProfileCardState extends State<ProfileCard> {
                     ],
                   ),
                   
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 4),
                   
                   Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
+                      spacing: 4,
+                      runSpacing: 4,
                       children: widget.profile.interests.map((interest) {
                         return Container(
                           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -1456,7 +1832,7 @@ class _ProfileCardState extends State<ProfileCard> {
                       }).toList(),
                     ),
                     
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 6),
                     
                     Row(
                       children: [
@@ -1543,7 +1919,10 @@ class TutorialScreen extends StatelessWidget {
                         ),
                         child: const Icon(Icons.close, color: Colors.white, size: 20),
                       ),
-                      onPressed: () => Navigator.pop(context),
+                      onPressed: () => Navigator.pushReplacement(
+                        context,
+                        MaterialPageRoute(builder: (context) => const HomeScreen()),
+                      ),
                     ),
                   ],
                 ),
@@ -1597,13 +1976,69 @@ class TutorialScreen extends StatelessWidget {
                       ),
                       
                       const SizedBox(height: 30),
-                      
-                      const Text(
-                        'Par Cristão',
-                        style: TextStyle(color: Colors.white54, fontSize: 14),
-                      ),
-                      const SizedBox(height: 20),
                     ],
+                  ),
+                ),
+              ),
+              
+              // Botão para ir para a Home
+              Padding(
+                padding: const EdgeInsets.all(20),
+                child: Container(
+                  width: double.infinity,
+                  height: 60,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(30),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.2),
+                        blurRadius: 15,
+                        offset: const Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: () => Navigator.pushReplacement(
+                        context,
+                        MaterialPageRoute(builder: (context) => const HomeScreen()),
+                      ),
+                      borderRadius: BorderRadius.circular(30),
+                      child: Center(
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            ShaderMask(
+                              shaderCallback: (bounds) => const LinearGradient(
+                                colors: [Color(0xFF667eea), Color(0xFF764ba2)],
+                              ).createShader(bounds),
+                              child: const Text(
+                                'Começar a Explorar',
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Container(
+                              width: 36,
+                              height: 36,
+                              decoration: const BoxDecoration(
+                                shape: BoxShape.circle,
+                                gradient: LinearGradient(
+                                  colors: [Color(0xFF667eea), Color(0xFF764ba2)],
+                                ),
+                              ),
+                              child: const Icon(Icons.arrow_forward_rounded, color: Colors.white, size: 20),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -1791,7 +2226,7 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
               // Conteúdo do Perfil
               SliverToBoxAdapter(
                 child: Container(
-                  padding: const EdgeInsets.all(20),
+                  padding: const EdgeInsets.all(24),
                   decoration: const BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
@@ -1807,81 +2242,125 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
                           decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
                         ),
                       ),
-                      const SizedBox(height: 20),
+                      const SizedBox(height: 24),
                       
                       // Cabeçalho (Nome, Idade, Verificado)
                       Row(
                         children: [
                           Expanded(
-                            child: Text(
-                              '${widget.profile.name}, ${widget.profile.age}',
-                              style: const TextStyle(
-                                fontSize: 28,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.black87,
-                              ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Text(
+                                      '${widget.profile.name}, ${widget.profile.age}',
+                                      style: const TextStyle(
+                                        fontSize: 28,
+                                        fontWeight: FontWeight.bold,
+                                        color: Color(0xFF2D3748),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Container(
+                                      padding: const EdgeInsets.all(4),
+                                      decoration: BoxDecoration(
+                                        color: Colors.blue.withOpacity(0.1),
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: const Icon(Icons.verified, color: Colors.blue, size: 20),
+                                    ),
+                                  ],
+                                ),
+                                if (widget.profile.gender != null) ...[
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    widget.profile.gender!,
+                                    style: TextStyle(color: Colors.grey[500], fontSize: 15),
+                                  ),
+                                ],
+                              ],
                             ),
                           ),
-                          const Icon(Icons.verified, color: Colors.blue, size: 24),
                         ],
                       ),
                       
-                      const SizedBox(height: 5),
+                      const SizedBox(height: 16),
                       
-                      // Cidade e Igreja
+                      // Localização e Igreja - Cards compactos
                       Row(
                         children: [
-                          Icon(Icons.location_on, size: 16, color: Colors.grey[600]),
-                          const SizedBox(width: 4),
-                          Text(widget.profile.city, style: TextStyle(color: Colors.grey[600], fontSize: 15)),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          Icon(Icons.church, size: 16, color: Colors.grey[600]),
-                          const SizedBox(width: 4),
-                          Text(widget.profile.church, style: TextStyle(color: Colors.grey[600], fontSize: 15)),
+                          Expanded(
+                            child: _buildInfoChip(Icons.location_on_outlined, widget.profile.city),
+                          ),
                         ],
                       ),
                       
-                      const Divider(height: 40),
+                      const SizedBox(height: 28),
                       
-                      // Sobre Mim
-                      const Text(
-                        'Sobre mim',
-                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        widget.profile.bio,
-                        style: TextStyle(color: Colors.grey[700], fontSize: 16, height: 1.5),
+                      // Seção: Sobre Mim
+                      _buildDetailSection(
+                        icon: Icons.person_outline_rounded,
+                        title: 'Sobre mim',
+                        child: Text(
+                          widget.profile.bio,
+                          style: TextStyle(color: Colors.grey[700], fontSize: 15, height: 1.6),
+                        ),
                       ),
                       
-                      const Divider(height: 40),
-                      
-                      // Interesses
-                      const Text(
-                        'Interesses',
-                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      // Seção: Igreja e Fé
+                      _buildDetailSection(
+                        icon: Icons.church_outlined,
+                        title: 'Igreja e Fé',
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _buildDetailInfoRow(Icons.home_outlined, 'Igreja', widget.profile.church),
+                            if (widget.profile.faith != null) ...[
+                              const SizedBox(height: 12),
+                              _buildDetailInfoRow(Icons.auto_awesome_outlined, 'Confissão', widget.profile.faith!),
+                            ],
+                            if (widget.profile.ministry != null) ...[
+                              const SizedBox(height: 12),
+                              _buildDetailInfoRow(Icons.volunteer_activism_outlined, 'Participação', widget.profile.ministry!),
+                            ],
+                          ],
+                        ),
                       ),
-                      const SizedBox(height: 15),
-                      Wrap(
-                        spacing: 10,
-                        runSpacing: 10,
-                        children: widget.profile.interests.map((interest) {
-                          return Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(20),
-                              border: Border.all(color: Colors.grey[300]!),
-                            ),
-                            child: Text(
-                              interest,
-                              style: TextStyle(color: Colors.grey[800], fontWeight: FontWeight.w500),
-                            ),
-                          );
-                        }).toList(),
+                      
+                      // Seção: Interesses
+                      _buildDetailSection(
+                        icon: Icons.interests_outlined,
+                        title: 'Interesses',
+                        child: Wrap(
+                          spacing: 10,
+                          runSpacing: 10,
+                          children: widget.profile.interests.map((interest) {
+                            return Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [
+                                    const Color(0xFF667eea).withOpacity(0.1),
+                                    const Color(0xFF764ba2).withOpacity(0.05),
+                                  ],
+                                ),
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(
+                                  color: const Color(0xFF667eea).withOpacity(0.3),
+                                ),
+                              ),
+                              child: Text(
+                                interest,
+                                style: const TextStyle(
+                                  color: Color(0xFF667eea),
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                        ),
                       ),
                       
                       const SizedBox(height: 100),
@@ -1930,6 +2409,102 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
         ),
         child: Icon(icon, color: echoColor, size: size * 0.5),
       ),
+    );
+  }
+
+  Widget _buildInfoChip(IconData icon, String text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.grey[100],
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 18, color: const Color(0xFF667eea)),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              text,
+              style: TextStyle(color: Colors.grey[700], fontSize: 14),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDetailSection({
+    required IconData icon,
+    required String title,
+    required Widget child,
+  }) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 20),
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.grey[50],
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey[200]!),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF667eea), Color(0xFF764ba2)],
+                  ),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon, color: Colors.white, size: 18),
+              ),
+              const SizedBox(width: 12),
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF2D3748),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          child,
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDetailInfoRow(IconData icon, String label, String value) {
+    return Row(
+      children: [
+        Icon(icon, color: const Color(0xFF667eea), size: 18),
+        const SizedBox(width: 10),
+        Text(
+          '$label: ',
+          style: TextStyle(
+            color: Colors.grey[500],
+            fontSize: 14,
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            style: const TextStyle(
+              color: Color(0xFF2D3748),
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
