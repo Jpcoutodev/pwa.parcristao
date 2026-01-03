@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:novo_app/main.dart'; // To access Profile class
+import 'package:novo_app/chat_screen.dart'; // Import Chat Screen
 
 class ProfileDetailScreen extends StatelessWidget {
   final Profile profile;
@@ -26,6 +27,31 @@ class ProfileDetailScreen extends StatelessWidget {
                   ),
                   onPressed: () => Navigator.pop(context),
                 ),
+                actions: [
+                  if (profile.matchId != null)
+                    IconButton(
+                      icon: Container(
+                        padding: const EdgeInsets.all(5),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF667eea).withOpacity(0.9),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.chat, color: Colors.white),
+                      ),
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => ChatScreen(
+                              matchId: profile.matchId!,
+                              targetProfile: profile,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  const SizedBox(width: 8),
+                ],
                 flexibleSpace: FlexibleSpaceBar(
                   background: Stack(
                     fit: StackFit.expand,
@@ -171,6 +197,18 @@ class ProfileDetailScreen extends StatelessWidget {
                  _buildActionButton(Icons.close, Colors.white, Colors.redAccent, 60, () => Navigator.pop(context, 'dislike')),
                  _buildActionButton(Icons.star, Colors.white, Colors.blueAccent, 50, () => Navigator.pop(context, 'super')),
                  _buildActionButton(Icons.favorite, Colors.white, const Color(0xFF00E676), 60, () => Navigator.pop(context, 'like')),
+                 if (profile.matchId != null)
+                   _buildActionButton(Icons.chat, Colors.white, const Color(0xFF667eea), 60, () {
+                     Navigator.push(
+                       context,
+                       MaterialPageRoute(
+                         builder: (context) => ChatScreen(
+                           matchId: profile.matchId!,
+                           targetProfile: profile,
+                         ),
+                       ),
+                     );
+                   }),
               ],
             ),
           ),

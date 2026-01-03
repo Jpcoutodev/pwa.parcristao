@@ -5,6 +5,7 @@ import 'package:novo_app/supabase_config.dart';
 import 'package:novo_app/auth_screen.dart';
 import 'package:novo_app/edit_profile_screen.dart'; // Import da tela de edição
 import 'package:novo_app/temp_profile_detail.dart'; // Import Profile Detail
+import 'package:novo_app/chat_screen.dart'; // Import Chat Screen
 import 'package:geolocator/geolocator.dart';
 
 void main() async {
@@ -56,6 +57,10 @@ class Profile {
   final bool isOnline;
   final double? latitude; // Novo: Latitude para cálculo de distância
   final double? longitude; // Novo: Longitude para cálculo de distância
+  final String? matchId; // Match ID for chat/delete functionality
+  final int unreadCount;
+  final String? lastMessage;
+  final DateTime? lastMessageTime;
 
   Profile({
     required this.id,
@@ -72,6 +77,10 @@ class Profile {
     this.isOnline = false,
     this.latitude,
     this.longitude,
+    this.matchId,
+    this.unreadCount = 0,
+    this.lastMessage,
+    this.lastMessageTime,
   });
 }
 
@@ -178,6 +187,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   
   // Notifications
   int _notificationCount = 0; // Contagem de notificações de interesse
+  int _messagesNotificationCount = 0; // Contagem de mensagens não lidas
   // Cache for interest futures to prevent re-fetching on every build
   final Map<String, Future<List<Profile>>> _interestFutures = {};
   
@@ -191,6 +201,50 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _fetchProfiles();
     _checkUserLocation();
     _fetchNotificationCount();
+    _checkMissedMatches();
+  }
+
+  Future<void> _checkMissedMatches() async {
+    try {
+      final supabase = Supabase.instance.client;
+      final userId = supabase.auth.currentUser?.id;
+      if (userId == null) return;
+
+      // Check for matches where I am user1 and haven't seen it (unlikely with current logic but good for safety)
+      // OR I am user2 and haven't seen it (common case)
+      
+      final unseenMatches = await supabase
+          .from('matches')
+          .select('*, p1:profiles!matches_user1_id_fkey(*), p2:profiles!matches_user2_id_fkey(*)')
+          .or('and(user1_id.eq.$userId,user1_seen.eq.false),and(user2_id.eq.$userId,user2_seen.eq.false)');
+      
+      if (unseenMatches != null && (unseenMatches as List).isNotEmpty) {
+        for (var match in unseenMatches) {
+          final isUser1 = match['user1_id'] == userId;
+          final targetData = isUser1 ? match['p2'] : match['p1'];
+          
+          if (targetData != null) {
+            final targetProfile = _mapProfile(targetData);
+            
+            // CRITICAL: Mark as seen FIRST, before showing dialog
+            // This prevents the notification from appearing again if user closes app during animation
+            await supabase.from('matches').update({
+              isUser1 ? 'user1_seen' : 'user2_seen': true,
+            }).eq('id', match['id']);
+            
+            if (mounted) {
+              // Now show the dialog
+              _showReciprocalInterestDialog(targetProfile);
+              
+              // Break after one to avoid UI chaos. Ideally, we'd queue them.
+              break; 
+            }
+          }
+        }
+      }
+    } catch (e) {
+      print('Erro ao verificar matches perdidos: $e');
+    }
   }
 
   Future<void> _fetchNotificationCount() async {
@@ -211,11 +265,19 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           .count(CountOption.exact)
           .eq('liked_id', userId);
 
+      // Count unread messages
+      final unreadMessagesCount = await supabase
+          .from('messages')
+          .count(CountOption.exact)
+          .eq('read', false)
+          .neq('sender_id', userId); // Matches logic: incoming messages not read
+
       final total = likesCount + superLikesCount;
 
       if (mounted) {
         setState(() {
           _notificationCount = total;
+          _messagesNotificationCount = unreadMessagesCount;
         });
       }
     } catch (e) {
@@ -536,6 +598,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       // 3. If they liked me, IT\'S A MATCH!
       if (reciprocalLike != null || reciprocalSuper != null) {
         print('💖 IT\'S A MATCH!');
+        
+        // Save match to database
+        await supabase.from('matches').insert({
+          'user1_id': userId,
+          'user2_id': targetProfile.id,
+          'created_at': DateTime.now().toIso8601String(),
+          'user1_seen': true, // I am seeing it right now
+          'user2_seen': false, // The other person hasn't seen it yet
+        });
+
         if (mounted) {
            _showReciprocalInterestDialog(targetProfile);
         }
@@ -608,10 +680,44 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       final userId = supabase.auth.currentUser?.id;
       
       if (userId != null) {
+        // 1. Check for reciprocity first
+        final reciprocalLike = await supabase
+            .from('likes')
+            .select()
+            .eq('liker_id', profile.id)
+            .eq('liked_id', userId)
+            .maybeSingle();
+        
+        final reciprocalSuper = await supabase
+            .from('super_likes')
+            .select()
+            .eq('liker_id', profile.id)
+            .eq('liked_id', userId)
+            .maybeSingle();
+
+        // 2. Save Super Like
         await supabase.from('super_likes').upsert({
           'liker_id': userId,
           'liked_id': profile.id,
         });
+
+        // 3. Handle Match
+        if (reciprocalLike != null || reciprocalSuper != null) {
+             print('💖 IT\'S A MATCH (via Super Like)!');
+             
+             await supabase.from('matches').insert({
+               'user1_id': userId,
+               'user2_id': profile.id,
+               'created_at': DateTime.now().toIso8601String(),
+               'user1_seen': true,
+               'user2_seen': false,
+             });
+
+             if (mounted) {
+                _showReciprocalInterestDialog(profile);
+             }
+             _interestFutures.clear();
+        }
       }
     } catch (e) {
       print('❌ ERROR saving super like: $e');
@@ -956,7 +1062,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     _refreshInterestTab(status);
                   }
                 },
-                child: _buildInterestCard(profile, status),
+                child: _buildInterestCard(profile, status, matchId: profile.matchId),
               );
             },
           ),
@@ -970,6 +1076,207 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _interestFutures[status] = _fetchInterestProfiles(status);
     });
     await _interestFutures[status];
+  }
+  
+  Future<void> _deleteMatch(String matchId, String status) async {
+    try {
+      final supabase = Supabase.instance.client;
+      await supabase.from('matches').delete().eq('id', matchId);
+      await _refreshInterestTab(status);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Match removido'), backgroundColor: Colors.orange),
+        );
+      }
+    } catch (e) {
+      print('Erro ao excluir match: $e');
+    }
+  }
+  
+  Widget _buildInterestCard(Profile profile, String status, {String? matchId}) {
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: status == 'mutuos' ? null : () async {
+              final action = await Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => ProfileDetailScreen(profile: profile),
+                ),
+              );
+              
+              if (action == 'like') {
+                await _processLike(profile);
+                _refreshInterestTab(status);
+              } else if (action == 'dislike') {
+                await _onDislikeFromProfile(profile);
+                _refreshInterestTab(status);
+              } else if (action == 'super') {
+                await _onSuperLikeFromProfile(profile);
+                _refreshInterestTab(status);
+              }
+            },
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                // Profile Image
+                Image.network(
+                  profile.imageUrls.isNotEmpty
+                      ? profile.imageUrls.first
+                      : 'https://via.placeholder.com/300',
+                  fit: BoxFit.cover,
+                ),
+                // Gradient Overlay
+                Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.transparent,
+                        Colors.black.withOpacity(0.7),
+                      ],
+                    ),
+                  ),
+                ),
+                // Profile Info
+                Positioned(
+                  bottom: 12,
+                  left: 12,
+                  right: 12,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      GestureDetector(
+                        onTap: () async {
+                          final action = await Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => ProfileDetailScreen(profile: profile),
+                            ),
+                          );
+                          
+                          if (action == 'like') {
+                            await _processLike(profile);
+                            _refreshInterestTab(status);
+                          } else if (action == 'dislike') {
+                            await _onDislikeFromProfile(profile);
+                            _refreshInterestTab(status);
+                          } else if (action == 'super') {
+                            await _onSuperLikeFromProfile(profile);
+                            _refreshInterestTab(status);
+                          }
+                        },
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '${profile.name}, ${profile.age}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              profile.city,
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.8),
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      // Action Buttons for Mutuos (Match)
+                      if (status == 'mutuos' && matchId != null) ...[
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                onPressed: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) => ChatScreen(
+                                        matchId: matchId,
+                                        targetProfile: profile,
+                                      ),
+                                    ),
+                                  );
+                                },
+                                icon: const Icon(Icons.chat_bubble_outline, size: 16),
+                                label: const Text('Chat', style: TextStyle(fontSize: 11)),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF667eea),
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(vertical: 6),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            GestureDetector(
+                              onTap: () {
+                                showDialog(
+                                  context: context,
+                                  builder: (ctx) => AlertDialog(
+                                    title: const Text('Excluir Match'),
+                                    content: Text('Deseja remover ${profile.name} dos seus matches?'),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () => Navigator.pop(ctx),
+                                        child: const Text('Cancelar'),
+                                      ),
+                                      TextButton(
+                                        onPressed: () {
+                                          Navigator.pop(ctx);
+                                          _deleteMatch(matchId, status);
+                                        },
+                                        child: const Text('Excluir', style: TextStyle(color: Colors.red)),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: Colors.red.withOpacity(0.8),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Icon(Icons.delete_outline, color: Colors.white, size: 18),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
   
   Future<List<Profile>> _fetchInterestProfiles(String status) async {
@@ -1022,16 +1329,48 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       } else if (status == 'mutuos') {
         final data = await supabase
             .from('matches')
-            .select('user1_id, user2_id, p1:profiles!matches_user1_id_fkey(*), p2:profiles!matches_user2_id_fkey(*)')
-            .or('user1_id.eq.$userId,user2_id.eq.$userId');
+            .select('id, user1_id, user2_id, p1:profiles!matches_user1_id_fkey(*), p2:profiles!matches_user2_id_fkey(*), messages:messages(content, created_at, sender_id, read)')
+            .or('user1_id.eq.$userId,user2_id.eq.$userId')
+            .order('created_at', descending: true, referencedTable: 'messages'); // Get latest messages
         
         for (var item in data) {
           final profileData = item['user1_id'] == userId ? item['p2'] : item['p1'];
           if (profileData != null) {
-            profiles.add(_mapProfile(profileData));
+            final msgs = (item['messages'] as List?) ?? [];
+            int unread = 0;
+            String? lastMsg;
+            DateTime? lastTime;
+            
+            if (msgs.isNotEmpty) {
+              // Messages are ordered by created_at desc (newest first)
+              // Calculate unread: count messages where sender_id != me AND read is false
+              for (var m in msgs) {
+                 if (m['sender_id'] != userId && (m['read'] == false || m['read'] == null)) {
+                   unread++;
+                 }
+              }
+              lastMsg = msgs.first['content'] as String?;
+              lastTime = DateTime.tryParse(msgs.first['created_at'].toString());
+            }
+
+            final profile = _mapProfile(
+              profileData, 
+              matchId: item['id']?.toString(),
+              unreadCount: unread,
+              lastMessage: lastMsg,
+              lastMessageTime: lastTime,
+            );
+            profiles.add(profile);
           }
         }
-            
+        
+        // Sort profiles by last message time (newest on top)
+        profiles.sort((a, b) {
+           final timeA = a.lastMessageTime ?? DateTime(2000);
+           final timeB = b.lastMessageTime ?? DateTime(2000);
+           return timeB.compareTo(timeA);
+        });
+
       } else if (status == 'super') {
         final data = await supabase
             .from('super_likes')
@@ -1075,7 +1414,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
   }
 
-  Profile _mapProfile(Map<String, dynamic> data) {
+  Profile _mapProfile(Map<String, dynamic> data, {String? matchId, int unreadCount = 0, String? lastMessage, DateTime? lastMessageTime}) {
     return Profile(
       id: data['id'],
       name: data['name'] ?? 'Usuário',
@@ -1090,260 +1429,244 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       interests: List<String>.from(data['interests'] ?? []),
       latitude: data['latitude']?.toDouble(),
       longitude: data['longitude']?.toDouble(),
-    );
-  }
-
-  Widget _buildInterestCard(Profile profile, String status) {
-    final bool isMutuo = status == 'mutuos';
-    final bool isSuper = status == 'super';
-
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(15),
-        color: Colors.grey[200],
-        image: DecorationImage(
-          image: NetworkImage(profile.imageUrls.isNotEmpty ? profile.imageUrls.first : 'https://via.placeholder.com/150'),
-          fit: BoxFit.cover,
-          onError: (exception, stackTrace) {
-            print('Error loading image: $exception');
-          },
-        ),
-      ),
-      child: Stack(
-        children: [
-          // Gradiente para texto
-          Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(15),
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [Colors.transparent, Colors.black.withOpacity(0.8)],
-                stops: const [0.6, 1.0],
-              ),
-            ),
-          ),
-          
-          // Nome e Idade
-          Positioned(
-            bottom: 10,
-            left: 10,
-            right: 10,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Flexible(
-                      child: Text(
-                        profile.name,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    if (isMutuo) ...[
-                      const SizedBox(width: 4),
-                      const Icon(Icons.favorite, color: Colors.greenAccent, size: 14)
-                    ]
-                  ],
-                ),
-                Text(
-                  '${profile.age} anos',
-                  style: const TextStyle(color: Colors.white70, fontSize: 12),
-                ),
-              ],
-            ),
-          ),
-
-          // Badges (Super Like)
-          if (isSuper)
-            Positioned(
-              top: 8,
-              right: 8,
-              child: Container(
-                padding: const EdgeInsets.all(6),
-                decoration: const BoxDecoration(
-                  color: Colors.blue,
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(Icons.star, color: Colors.white, size: 16),
-              ),
-            ),
-        ],
-      ),
+      matchId: matchId,
+      unreadCount: unreadCount,
+      lastMessage: lastMessage,
+      lastMessageTime: lastMessageTime,
     );
   }
 
   // --- Aba de Chat (Mensagens) ---
-  Widget _buildMessagesTab() {
-    // Dados Fictícios de Conversas
-    final conversations = [
-      {'profile': sampleProfiles[0], 'msg': 'Oie! Tudo bem? Vi que também gosta de música!', 'time': '10:30', 'count': 2},
-      {'profile': sampleProfiles[1], 'msg': 'A paz! Qual igreja você frequenta?', 'time': 'Ontem', 'count': 0},
-      {'profile': sampleProfiles[2], 'msg': 'Vamos marcar aquele café?', 'time': 'Seg', 'count': 1},
-    ];
+  // Placeholder - Cancel replacement to do Profile update first.
+      future: _interestFutures['mutuos'] ?? _fetchInterestProfiles('mutuos'),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
 
-    // matches recentes (usando os ultimos do sample)
-    final recentMatches = sampleProfiles.reversed.take(5).toList();
+        final profiles = snapshot.data ?? [];
 
-    return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        title: const Text(
-          'Mensagens',
-          style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
-        ),
-        backgroundColor: Colors.white,
-        elevation: 0,
-        actions: [
-          IconButton(onPressed: () {}, icon: const Icon(Icons.search, color: Colors.grey)),
-        ],
-      ),
-      body: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Seção: Novos Matches
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-              child: Text(
-                'Novos Matches',
-                style: TextStyle(color: Color(0xFF667eea), fontWeight: FontWeight.bold, fontSize: 14),
-              ),
+        if (profiles.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.chat_bubble_outline, size: 60, color: Colors.grey[300]),
+                const SizedBox(height: 16),
+                Text(
+                  'Nenhuma conversa ainda',
+                  style: TextStyle(color: Colors.grey[500], fontSize: 16),
+                ),
+              ],
             ),
-            
-            SizedBox(
-              height: 100,
-              child: ListView.builder(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 15),
-                itemCount: recentMatches.length,
-                itemBuilder: (context, index) {
-                  final profile = recentMatches[index];
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    child: Column(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(3),
-                          decoration: const BoxDecoration(
-                            shape: BoxShape.circle,
-                            gradient: LinearGradient(
-                              colors: [Color(0xFF667eea), Color(0xFF764ba2)],
+          );
+        }
+
+        return Scaffold(
+          backgroundColor: Colors.white,
+          appBar: AppBar(
+            title: const Text(
+              'Mensagens',
+              style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+            ),
+            backgroundColor: Colors.white,
+            elevation: 0,
+            actions: [
+              IconButton(onPressed: () {}, icon: const Icon(Icons.search, color: Colors.grey)),
+            ],
+          ),
+          body: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Minhas Conversas',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.grey[800]),
+                  ),
+                ),
+              ),
+              Expanded(
+                child: ListView.separated(
+                  itemCount: profiles.length,
+                  separatorBuilder: (context, index) => const Divider(indent: 80, height: 1),
+                  itemBuilder: (context, index) {
+                    final profile = profiles[index];
+                    
+                    return ListTile(
+                      onTap: () async {
+                        if (profile.matchId != null) {
+                          await Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => ChatScreen(
+                                matchId: profile.matchId!,
+                                targetProfile: profile,
+                              ),
+                            ),
+                          );
+                          _refreshInterestTab('mutuos'); 
+                        }
+                      },
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                      leading: Stack(
+                        children: [
+                          CircleAvatar(
+                            radius: 28,
+                            backgroundImage: NetworkImage(
+                              profile.imageUrls.isNotEmpty 
+                                  ? profile.imageUrls.first 
+                                  : 'https://via.placeholder.com/150'
                             ),
                           ),
-                          child: CircleAvatar(
-                            radius: 30,
-                            backgroundImage: NetworkImage(profile.imageUrls.first),
-                          ),
-                        ),
-                        const SizedBox(height: 5),
-                        Text(
-                          profile.name,
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
-                        ),
-                      ],
-                    ),
-                  );
-                },
-              ),
-            ),
-            
-            const Divider(height: 30),
-            
-            // Seção: Mensagens
-             const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 5),
-              child: Text(
-                'Conversas',
-                style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 16),
-              ),
-            ),
-
-            ListView.separated(
-              physics: const NeverScrollableScrollPhysics(), // Scroll controlado pelo pai
-              shrinkWrap: true,
-              itemCount: conversations.length,
-              separatorBuilder: (context, index) => const Divider(indent: 80, height: 1),
-              itemBuilder: (context, index) {
-                final chat = conversations[index];
-                final profile = chat['profile'] as Profile;
-                final unreadCount = chat['count'] as int;
-                
-                return ListTile(
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                  leading: Stack(
-                    children: [
-                      CircleAvatar(
-                        radius: 28,
-                        backgroundImage: NetworkImage(profile.imageUrls.first),
+                          if (profile.unreadCount > 0)
+                            Positioned(
+                              right: 0,
+                              top: 0,
+                              child: Container(
+                                padding: const EdgeInsets.all(4),
+                                decoration: const BoxDecoration(
+                                  color: Colors.red,
+                                  shape: BoxShape.circle,
+                                ),
+                                constraints: const BoxConstraints(
+                                  minWidth: 16,
+                                  minHeight: 16,
+                                ),
+                                child: Text(
+                                  '${profile.unreadCount}',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
-                      if (index == 0) // Exemplo de 'Online'
-                        Positioned(
-                          right: 0,
-                          bottom: 0,
-                          child: Container(
-                            width: 14,
-                            height: 14,
-                            decoration: BoxDecoration(
-                              color: Colors.green,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: Colors.white, width: 2),
+                      title: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            profile.name,
+                            style: TextStyle(
+                              fontWeight: profile.unreadCount > 0 ? FontWeight.bold : FontWeight.normal,
+                              fontSize: 16,
                             ),
                           ),
-                        ),
-                    ],
-                  ),
-                  title: Text(
-                    profile.name,
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                  ),
-                  subtitle: Text(
-                    chat['msg'] as String,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: unreadCount > 0 ? Colors.black87 : Colors.grey,
-                      fontWeight: unreadCount > 0 ? FontWeight.w600 : FontWeight.normal,
-                    ),
-                  ),
-                  trailing: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(
-                        chat['time'] as String,
-                        style: const TextStyle(color: Colors.grey, fontSize: 12),
+                          if (profile.lastMessageTime != null)
+                            Text(
+                              '${profile.lastMessageTime!.hour}:${profile.lastMessageTime!.minute.toString().padLeft(2, '0')}',
+                              style: TextStyle(color: Colors.grey[500], fontSize: 12),
+                            ),
+                        ],
                       ),
-                      const SizedBox(height: 5),
-                      if (unreadCount > 0)
-                        Container(
-                          padding: const EdgeInsets.all(6),
-                          decoration: const BoxDecoration(
-                            color: Color(0xFF667eea),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Text(
-                            unreadCount.toString(),
-                            style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
-                          ),
+                      subtitle: Text(
+                        profile.lastMessage ?? 'Toque para conversar',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: profile.unreadCount > 0 ? Colors.black87 : Colors.grey[600],
+                          fontWeight: profile.unreadCount > 0 ? FontWeight.w600 : FontWeight.normal,
                         ),
-                    ],
-                  ),
-                  onTap: () {
-                    // TODO: Abrir tela de chat individual
-                    print('Abrir chat com ${profile.name}');
+                      ),
+                      trailing: PopupMenuButton<String>(
+                        onSelected: (value) async {
+                          if (value == 'clear') {
+                            if (profile.matchId != null) {
+                              await _clearChat(profile.matchId!);
+                            }
+                          } else if (value == 'delete') {
+                            showDialog(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                title: const Text('Desfazer Match'),
+                                content: Text('Tem certeza que deseja desfazer o match com ${profile.name}?'),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(ctx),
+                                    child: const Text('Cancelar'),
+                                  ),
+                                  TextButton(
+                                    onPressed: () {
+                                      Navigator.pop(ctx);
+                                      if (profile.matchId != null) {
+                                        _deleteMatch(profile.matchId!, 'mutuos');
+                                      }
+                                    },
+                                    child: const Text('Desfazer Match', style: TextStyle(color: Colors.red)),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }
+                        },
+                        itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+                          const PopupMenuItem<String>(
+                            value: 'clear',
+                            child: Row(
+                              children: [
+                                Icon(Icons.cleaning_services, size: 20, color: Colors.grey),
+                                SizedBox(width: 8),
+                                Text('Limpar Conversa'),
+                              ],
+                            ),
+                          ),
+                          const PopupMenuItem<String>(
+                            value: 'delete',
+                            child: Row(
+                              children: [
+                                Icon(Icons.person_remove, size: 20, color: Colors.red),
+                                SizedBox(width: 8),
+                                Text('Desfazer Match', style: TextStyle(color: Colors.red)),
+                              ],
+                            ),
+                          ),
+                        ],
+                        icon: const Icon(Icons.more_vert, color: Colors.grey),
+                      ),
+                    );
                   },
-                );
-              },
-            ),
-          ],
-        ),
-      ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _clearChat(String matchId) async {
+    try {
+      final supabase = Supabase.instance.client;
+      await supabase.from('messages').delete().eq('match_id', matchId);
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Conversa limpa com sucesso')),
+        );
+      }
+      _refreshInterestTab('mutuos'); // Refresh to update last message preview
+    } catch (e) {
+      print('Erro ao limpar conversa: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erro ao limpar conversa: $e')),
+        );
+      }
+    }
+  }  trailing: const Icon(Icons.chevron_right, color: Colors.grey),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
