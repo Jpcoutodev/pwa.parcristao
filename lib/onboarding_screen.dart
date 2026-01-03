@@ -7,6 +7,7 @@ import 'package:novo_app/main.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:novo_app/auth_screen.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:geocoding/geocoding.dart';
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
@@ -66,19 +67,18 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
   bool _useManualLocation = false;
   bool _isLoadingLocation = false;
 
-  Future<void> _pickImage() async {
+  Future<void> _pickImagesFromGallery() async {
     try {
       final List<XFile> images = await _picker.pickMultiImage(
-        imageQuality: 70, // Compprime a imagem (reduz tamanho)
-        maxWidth: 1440,   // Redimensiona se for muito grande
+        imageQuality: 70, 
+        maxWidth: 1440,
         maxHeight: 1440,
-        requestFullMetadata: false, // Ajuda a remover metadados extras (HEIC -> JPG no iOS muitas vezes)
+        requestFullMetadata: false,
       );
       
       if (images.isNotEmpty) {
         setState(() {
           _selectedImages.addAll(images);
-          // Limit to 6 photos
           if (_selectedImages.length > 6) {
              _selectedImages = _selectedImages.sublist(0, 6);
              _showError('Máximo de 6 fotos permitidas.');
@@ -88,6 +88,90 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
     } catch (e) {
       _showError('Erro ao selecionar fotos: $e');
     }
+  }
+
+  Future<void> _pickImageFromCamera() async {
+    try {
+      final XFile? image = await _picker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 70, 
+        maxWidth: 1440,
+        maxHeight: 1440,
+        requestFullMetadata: false,
+      );
+      
+      if (image != null) {
+        setState(() {
+          if (_selectedImages.length < 6) {
+             _selectedImages.add(image);
+          } else {
+             _showError('Máximo de 6 fotos permitidas.');
+          }
+        });
+      }
+    } catch (e) {
+      _showError('Erro ao tirar foto: $e');
+    }
+  }
+
+  void _showImageSourceActionSheet() {
+    if (kIsWeb) {
+      _pickImagesFromGallery();
+      return;
+    }
+    
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.only(
+            topLeft: Radius.circular(20),
+            topRight: Radius.circular(20),
+          ),
+        ),
+        child: SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 12),
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
+              ),
+              const SizedBox(height: 20),
+              ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(color: Colors.blue.withOpacity(0.1), shape: BoxShape.circle),
+                  child: const Icon(Icons.camera_alt, color: Colors.blue),
+                ),
+                title: const Text('Tirar Foto', style: TextStyle(fontWeight: FontWeight.w600)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickImageFromCamera();
+                },
+              ),
+              ListTile(
+                leading: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(color: Colors.purple.withOpacity(0.1), shape: BoxShape.circle),
+                  child: const Icon(Icons.photo_library, color: Colors.purple),
+                ),
+                title: const Text('Escolher da Galeria', style: TextStyle(fontWeight: FontWeight.w600)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickImagesFromGallery();
+                },
+              ),
+              const SizedBox(height: 10),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   void _removeImage(int index) {
@@ -1007,7 +1091,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
                         value: _selectedState,
                         hint: 'UF',
                         icon: Icons.map_outlined,
-                        items: ['SP', 'RJ', 'MG', 'PR', 'RS', 'SC', 'BA', 'PE', 'CE', 'GO', 'DF'],
+                        items: [
+                          'AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 
+                          'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 
+                          'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO'
+                        ],
                         onChanged: (v) => setState(() => _selectedState = v!),
                       ),
                     ],
@@ -1155,10 +1243,55 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
         desiredAccuracy: LocationAccuracy.high,
       );
       
+      // Reverse Geocoding
+      String city = '';
+      String state = '';
+      String country = 'Brasil';
+      
+      try {
+        List<Placemark> placemarks = await placemarkFromCoordinates(position.latitude, position.longitude);
+        if (placemarks.isNotEmpty) {
+          Placemark place = placemarks[0];
+          
+          // Cidade: locality ou subAdministrativeArea
+          city = place.subAdministrativeArea?.isNotEmpty == true 
+              ? place.subAdministrativeArea! 
+              : (place.locality ?? '');
+              
+          // Estado: administrativeArea (geralmente é a sigla, ex: SP)
+          state = place.administrativeArea ?? '';
+          
+          // Tratamento para garantir sigla (caso venha nome completo, o que é raro no geocoding android/ios p/ BR)
+          // Mas vamos confiar que se estiver na lista de siglas, usamos.
+          
+          country = place.country ?? 'Brasil';
+        }
+      } catch (e) {
+        print('Erro no geocoding: $e');
+        // Não falha o fluxo, apenas não preenche
+      }
+      
       setState(() {
         _latitude = position.latitude;
         _longitude = position.longitude;
         _isLoadingLocation = false;
+        
+        // Auto-fill fields
+        if (city.isNotEmpty) _cityController.text = city;
+        if (country == 'Brazil' || country == 'Brasil') _selectedCountry = 'Brasil';
+        
+        // Tenta selecionar o estado se for uma sigla válida da nossa lista
+        final validStates = [
+          'AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 
+          'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 
+          'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO'
+        ];
+        
+        if (validStates.contains(state)) {
+          _selectedState = state;
+        } else {
+            // Tenta mapear nomes comuns se necessário, ou deixa o padrão
+        }
       });
       
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1449,7 +1582,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
                 if (_selectedImages.length >= 6) return const SizedBox.shrink();
                 
                 return GestureDetector(
-                  onTap: _pickImage,
+                  onTap: _showImageSourceActionSheet,
                   child: Container(
                     decoration: BoxDecoration(
                       color: Colors.grey[100],
@@ -1716,53 +1849,121 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
   }
 
   Widget _buildDateSelector() {
-    return GestureDetector(
-      onTap: () async {
-        final date = await showDatePicker(
-          context: context,
-          initialDate: DateTime(2000),
-          firstDate: DateTime(1950),
-          lastDate: DateTime.now(),
-          builder: (context, child) {
-            return Theme(
-              data: Theme.of(context).copyWith(
-                colorScheme: ColorScheme.light(
-                  primary: _primaryColor,
-                  onPrimary: Colors.white,
-                  surface: Colors.white,
-                  onSurface: Colors.black87,
-                ),
-              ),
-              child: child!,
-            );
-          },
-        );
-        if (date != null) setState(() => _selectedDate = date);
-      },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(14),
-          color: Colors.grey[50],
-          border: Border.all(color: Colors.grey[200]!),
+    // Generate lists
+    final days = List.generate(31, (index) => (index + 1).toString().padLeft(2, '0'));
+    final months = List.generate(12, (index) => (index + 1).toString().padLeft(2, '0'));
+    final currentYear = DateTime.now().year;
+    final years = List.generate(100, (index) => (currentYear - 18 - index).toString());
+
+    // Current selection breakdown
+    String? day = _selectedDate?.day.toString().padLeft(2, '0');
+    String? month = _selectedDate?.month.toString().padLeft(2, '0');
+    String? year = _selectedDate?.year.toString();
+
+    // Reset if year is out of range for some reason
+    if (year != null && !years.contains(year)) year = null;
+
+    return Row(
+      children: [
+        // DAY
+        Expanded(
+          flex: 2,
+          child: _buildSimpleDateDropdown(
+            value: day,
+            hint: 'Dia',
+            items: days,
+            onChanged: (val) {
+              if (val == null) return;
+              setState(() {
+                final newDay = int.parse(val);
+                final newMonth = month != null ? int.parse(month!) : 1;
+                final newYear = year != null ? int.parse(year!) : (currentYear - 18);
+                
+                // Validate valid days in month
+                final maxDays = DateTime(newYear, newMonth + 1, 0).day;
+                final validDay = newDay > maxDays ? maxDays : newDay;
+
+                _selectedDate = DateTime(newYear, newMonth, validDay);
+              });
+            },
+          ),
         ),
-        child: Row(
-          children: [
-            Icon(Icons.calendar_month_outlined, color: _primaryColor.withOpacity(0.7), size: 22),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                _selectedDate == null
-                    ? 'Selecione sua data de nascimento'
-                    : '${_selectedDate!.day.toString().padLeft(2, '0')}/${_selectedDate!.month.toString().padLeft(2, '0')}/${_selectedDate!.year}',
-                style: TextStyle(
-                  color: _selectedDate == null ? Colors.grey[400] : Colors.black87,
-                  fontSize: 15,
-                ),
-              ),
-            ),
-            Icon(Icons.keyboard_arrow_down_rounded, color: _primaryColor),
-          ],
+        const SizedBox(width: 8),
+        
+        // MONTH
+        Expanded(
+          flex: 2,
+          child: _buildSimpleDateDropdown(
+            value: month,
+            hint: 'Mês',
+            items: months,
+            onChanged: (val) {
+              if (val == null) return;
+              setState(() {
+                final newMonth = int.parse(val);
+                final newDay = day != null ? int.parse(day!) : 1;
+                final newYear = year != null ? int.parse(year!) : (currentYear - 18);
+
+                final maxDays = DateTime(newYear, newMonth + 1, 0).day;
+                final validDay = newDay > maxDays ? maxDays : newDay;
+
+                _selectedDate = DateTime(newYear, newMonth, validDay);
+              });
+            },
+          ),
+        ),
+         const SizedBox(width: 8),
+         
+        // YEAR
+        Expanded(
+          flex: 3,
+          child: _buildSimpleDateDropdown(
+            value: year,
+            hint: 'Ano',
+            items: years,
+            onChanged: (val) {
+              if (val == null) return;
+              setState(() {
+                final newYear = int.parse(val);
+                final newMonth = month != null ? int.parse(month!) : 1;
+                final newDay = day != null ? int.parse(day!) : 1;
+
+                final maxDays = DateTime(newYear, newMonth + 1, 0).day;
+                final validDay = newDay > maxDays ? maxDays : newDay;
+
+                _selectedDate = DateTime(newYear, newMonth, validDay);
+              });
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSimpleDateDropdown({
+    required String? value, 
+    required String hint, 
+    required List<String> items, 
+    required Function(String?) onChanged
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(14),
+        color: Colors.grey[50],
+        border: Border.all(color: Colors.grey[200]!),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: value,
+          isExpanded: true,
+          hint: Center(child: Text(hint, style: TextStyle(color: Colors.grey[400], fontSize: 13))), 
+          icon: Icon(Icons.arrow_drop_down, color: _primaryColor),
+          items: items.map((e) => DropdownMenuItem(
+            value: e,
+            child: Center(child: Text(e, style: const TextStyle(fontSize: 14))),
+          )).toList(),
+          onChanged: onChanged,
         ),
       ),
     );

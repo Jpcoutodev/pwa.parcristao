@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:novo_app/supabase_config.dart';
 import 'package:novo_app/auth_screen.dart';
 import 'package:novo_app/edit_profile_screen.dart'; // Import da tela de edição
+import 'package:novo_app/temp_profile_detail.dart'; // Import Profile Detail
 import 'package:geolocator/geolocator.dart';
 
 void main() async {
@@ -175,6 +176,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   bool _hasMoreProfiles = true;
   bool _isLoadingMore = false;
   
+  // Notifications
+  int _notificationCount = 0; // Contagem de notificações de interesse
   // Cache for interest futures to prevent re-fetching on every build
   final Map<String, Future<List<Profile>>> _interestFutures = {};
   
@@ -187,6 +190,37 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
     _fetchProfiles();
     _checkUserLocation();
+    _fetchNotificationCount();
+  }
+
+  Future<void> _fetchNotificationCount() async {
+    try {
+      final supabase = Supabase.instance.client;
+      final userId = supabase.auth.currentUser?.id;
+      if (userId == null) return;
+
+      // Count received likes
+      final likesCount = await supabase
+          .from('likes')
+          .count(CountOption.exact)
+          .eq('liked_id', userId);
+      
+      // Count received super likes
+      final superLikesCount = await supabase
+          .from('super_likes')
+          .count(CountOption.exact)
+          .eq('liked_id', userId);
+
+      final total = likesCount + superLikesCount;
+
+      if (mounted) {
+        setState(() {
+          _notificationCount = total;
+        });
+      }
+    } catch (e) {
+      print('Erro ao buscar notificações: $e');
+    }
   }
 
   Future<void> _fetchProfiles({bool loadMore = false}) async {
@@ -348,6 +382,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     if (_selectedIndex == 4 && index == 0) {
       _fetchProfiles(); // Refresh to apply new filter settings
     }
+
+    // Se clicar na aba de Interesse (index 1), limpa a notificação
+    if (index == 1) {
+      setState(() {
+        _notificationCount = 0;
+      });
+    }
     
     setState(() {
       _selectedIndex = index;
@@ -370,6 +411,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final status = _getSwipeStatus();
     
     if (status != SwipeStatus.none) {
+      if (profiles.isNotEmpty) {
+        final currentProfile = profiles.last;
+        if (status == SwipeStatus.like) {
+          _processLike(currentProfile);
+        } else if (status == SwipeStatus.dislike) {
+          _onDislikeFromProfile(currentProfile);
+        } else if (status == SwipeStatus.superLike) {
+          _onSuperLikeFromProfile(currentProfile);
+        }
+      }
       _animateAndRemove(status);
     } else {
       _resetPosition();
@@ -486,20 +537,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       if (reciprocalLike != null || reciprocalSuper != null) {
         print('💖 IT\'S A MATCH!');
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('DEU MATCH com ${targetProfile.name}! ❤️'),
-              backgroundColor: Colors.pinkAccent,
-              duration: const Duration(seconds: 5),
-              action: SnackBarAction(
-                label: 'MENSAGENS',
-                textColor: Colors.white,
-                onPressed: () {
-                  setState(() => _selectedIndex = 1); // Vai para aba de chat
-                },
-              ),
-            ),
-          );
+           _showReciprocalInterestDialog(targetProfile);
         }
         
         // Clear all interests cache so they refresh next time the user views them
@@ -607,6 +645,42 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
   }
 
+  void _showReciprocalInterestDialog(Profile targetProfile) {
+    showGeneralDialog(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Fechar',
+      barrierColor: Colors.black.withOpacity(0.8), // Dark background focus
+      transitionDuration: const Duration(milliseconds: 600),
+      pageBuilder: (_, __, ___) {
+        return Center(
+          child: Material(
+            color: Colors.transparent,
+            child: MatchAnimationOverlay(
+              targetProfile: targetProfile,
+              onViewProfile: () {
+                Navigator.pop(context); // Close dialog
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => ProfileDetailScreen(profile: targetProfile),
+                  ),
+                );
+              },
+              onContinue: () => Navigator.pop(context),
+            ),
+          ),
+        );
+      },
+      transitionBuilder: (context, animation, secondaryAnimation, child) {
+        return ScaleTransition(
+          scale: CurvedAnimation(parent: animation, curve: Curves.elasticOut),
+          child: child,
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -653,31 +727,32 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 clipBehavior: Clip.none,
                 children: [
                   Icon(_selectedIndex == 1 ? Icons.favorite : Icons.favorite_border),
-                  Positioned(
-                    right: -2,
-                    top: -2,
-                    child: Container(
-                      padding: const EdgeInsets.all(3),
-                      decoration: BoxDecoration(
-                        color: Colors.red,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: Colors.white, width: 1.5), // Borda branca para destacar
-                      ),
-                      constraints: const BoxConstraints(
-                        minWidth: 16,
-                        minHeight: 16,
-                      ),
-                      child: const Text(
-                        '3',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
+                  if (_notificationCount > 0)
+                    Positioned(
+                      right: -2,
+                      top: -2,
+                      child: Container(
+                        padding: const EdgeInsets.all(3),
+                        decoration: BoxDecoration(
+                          color: Colors.red,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 1.5), // Borda branca para destacar
                         ),
-                        textAlign: TextAlign.center,
+                        constraints: const BoxConstraints(
+                          minWidth: 16,
+                          minHeight: 16,
+                        ),
+                        child: Text(
+                          _notificationCount > 99 ? '99+' : '$_notificationCount',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
                       ),
                     ),
-                  ),
                 ],
               ),
               label: 'Interesse',
@@ -748,7 +823,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             labelStyle: TextStyle(fontWeight: FontWeight.bold),
             tabs: [
               Tab(text: 'Recebidos'), // Interesses (Quem curtiu você)
-              Tab(text: 'Mútuos'),    // Match (Os dois)
+              Tab(text: 'Recíproco'),    // Match (Os dois)
               Tab(text: 'Super'),     // Super Like
               Tab(text: 'Enviados'),  // Curtidas enviadas (NOVO)
             ],
@@ -3575,6 +3650,8 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
     );
   }
 
+
+
   Widget _buildActionButton(IconData icon, Color iconColor, Color echoColor, double size, VoidCallback onTap) {
     return GestureDetector(
       onTap: onTap,
@@ -3690,6 +3767,152 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
           ),
         ),
       ],
+    );
+  }
+}
+
+// --- Match Animation Overlay Widget ---
+class MatchAnimationOverlay extends StatefulWidget {
+  final Profile targetProfile;
+  final VoidCallback onViewProfile;
+  final VoidCallback onContinue;
+
+  const MatchAnimationOverlay({
+    super.key,
+    required this.targetProfile,
+    required this.onViewProfile,
+    required this.onContinue,
+  });
+
+  @override
+  State<MatchAnimationOverlay> createState() => _MatchAnimationOverlayState();
+}
+
+class _MatchAnimationOverlayState extends State<MatchAnimationOverlay> with TickerProviderStateMixin {
+  late AnimationController _heartController;
+  final List<Widget> _hearts = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _heartController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    )..repeat();
+    
+    // Generate floating hearts
+    for (int i = 0; i < 15; i++) {
+      _hearts.add(_buildFloatingHeart());
+    }
+  }
+
+  @override
+  void dispose() {
+    _heartController.dispose();
+    super.dispose();
+  }
+
+  Widget _buildFloatingHeart() {
+    // Randomize position and size
+    // In a real scenario, use Random()
+    // For now, simpler implementation
+    return Positioned(
+      left: 50.0 + (DateTime.now().microsecondsSinceEpoch % 250),
+      bottom: -50,
+      child: AnimatedBuilder(
+        animation: _heartController,
+        builder: (context, child) {
+          final val = _heartController.value;
+          // Staggered animation based on index/random requires more complex setup
+          // Simple vertical float for demo
+          return Transform.translate(
+             offset: Offset(0, -500 * val), // Float up
+             child: Opacity(
+               opacity: 1.0 - val,
+               child: Icon(Icons.favorite, color: Colors.pinkAccent, size: 20 + (val * 30)),
+             ),
+          );
+        },
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        // Main Content
+        Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Text(
+              'Interesse Recíproco! ❤️',
+              style: TextStyle(
+                fontSize: 32,
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                shadows: [BoxShadow(color: Colors.black45, blurRadius: 10)],
+              ),
+            ),
+            const SizedBox(height: 40),
+            
+            // Avatars
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                // You (Placeholder - In real app, load current user image)
+                _buildAvatar('https://via.placeholder.com/150'), // Replace with actual user image
+               
+                const SizedBox(width: 20),
+                const Icon(Icons.favorite, color: Colors.white, size: 40),
+                const SizedBox(width: 20),
+                
+                // Them
+                _buildAvatar(widget.targetProfile.imageUrls.isNotEmpty 
+                    ? widget.targetProfile.imageUrls.first 
+                    : 'https://via.placeholder.com/150'),
+              ],
+            ),
+             const SizedBox(height: 20),
+             Text(
+              'Você e ${widget.targetProfile.name} se curtiram!',
+              style: const TextStyle(color: Colors.white70, fontSize: 16),
+             ),
+             const SizedBox(height: 50),
+             
+             // Buttons
+             ElevatedButton(
+               onPressed: widget.onViewProfile,
+               style: ElevatedButton.styleFrom(
+                 backgroundColor: Colors.white,
+                 foregroundColor: Colors.pinkAccent,
+                 padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 15),
+                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+               ),
+               child: const Text('VER PERFIL', style: TextStyle(fontWeight: FontWeight.bold)),
+             ),
+             const SizedBox(height: 15),
+             TextButton(
+               onPressed: widget.onContinue,
+               child: const Text('Continuar Navegando', style: TextStyle(color: Colors.white)),
+             ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAvatar(String url) {
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: const BoxDecoration(
+        shape: BoxShape.circle,
+        color: Colors.white,
+      ),
+      child: CircleAvatar(
+        radius: 50,
+        backgroundImage: NetworkImage(url),
+      ),
     );
   }
 }

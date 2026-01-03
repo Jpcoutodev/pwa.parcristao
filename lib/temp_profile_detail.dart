@@ -1,3 +1,5 @@
+import 'package:flutter/material.dart';
+import 'package:novo_app/main.dart'; // To access Profile class
 
 class ProfileDetailScreen extends StatelessWidget {
   final Profile profile;
