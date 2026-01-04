@@ -22,16 +22,53 @@ class _ChatScreenState extends State<ChatScreen> {
   List<Map<String, dynamic>> _messages = [];
   bool _isLoading = true;
   String? _currentUserId;
+  RealtimeChannel? _messagesChannel;
 
   @override
   void initState() {
     super.initState();
     _currentUserId = Supabase.instance.client.auth.currentUser?.id;
     _fetchMessages();
+    _subscribeToMessages();
+  }
+
+  void _subscribeToMessages() {
+    final supabase = Supabase.instance.client;
+    _messagesChannel = supabase.channel('chat_${widget.matchId}')
+      .onPostgresChanges(
+        event: PostgresChangeEvent.insert,
+        schema: 'public',
+        table: 'messages',
+        filter: PostgresChangeFilter(
+          type: PostgresChangeFilterType.eq,
+          column: 'match_id',
+          value: widget.matchId,
+        ),
+        callback: (payload) {
+          print('📨 New message received via Realtime!');
+          final newMsg = payload.newRecord;
+          if (mounted && newMsg != null) {
+            setState(() {
+              _messages.add(newMsg);
+            });
+            _scrollToBottom();
+            
+            // Mark as read if sender is not me
+            if (newMsg['sender_id'] != _currentUserId) {
+              supabase.from('messages')
+                  .update({'read': true})
+                  .eq('id', newMsg['id'])
+                  .then((_) => print('✅ Message marked as read'));
+            }
+          }
+        },
+      )
+      .subscribe();
   }
 
   @override
   void dispose() {
+    _messagesChannel?.unsubscribe();
     _messageController.dispose();
     _scrollController.dispose();
     super.dispose();

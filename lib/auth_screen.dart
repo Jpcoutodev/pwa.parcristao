@@ -304,22 +304,23 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                     children: [
                       // Logo
                       Container(
-                        width: 120,
-                        height: 120,
+                        margin: const EdgeInsets.only(bottom: 30),
+                        width: 140,
+                        height: 140,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
                           color: Colors.white,
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.black.withOpacity(0.2),
-                              blurRadius: 20,
-                              spreadRadius: 5,
+                              color: Colors.black.withOpacity(0.15),
+                              blurRadius: 15,
+                              offset: const Offset(0, 5),
                             )
                           ],
                         ),
-                        padding: const EdgeInsets.all(15), 
+                        padding: const EdgeInsets.all(20),
                         child: Image.asset(
-                          'assets/images/logo_icon.png',
+                          'assets/images/login_logo.png',
                           fit: BoxFit.contain,
                         ),
                       ),

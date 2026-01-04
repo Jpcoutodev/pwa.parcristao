@@ -929,6 +929,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             'user1_seen': true, // I am seeing it right now
             'user2_seen': false, // The other person hasn't seen it yet
           });
+
+          // Clean up likes/super_likes (match is now the source of truth)
+          await supabase.from('likes').delete().or('and(liker_id.eq.$userId,liked_id.eq.${targetProfile.id}),and(liker_id.eq.${targetProfile.id},liked_id.eq.$userId)');
+          await supabase.from('super_likes').delete().or('and(liker_id.eq.$userId,liked_id.eq.${targetProfile.id}),and(liker_id.eq.${targetProfile.id},liked_id.eq.$userId)');
         }
 
         if (mounted) {
@@ -1046,6 +1050,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                  'user1_seen': true,
                  'user2_seen': false,
                });
+
+               // Clean up likes/super_likes (match is now the source of truth)
+               await supabase.from('likes').delete().or('and(liker_id.eq.$userId,liked_id.eq.${profile.id}),and(liker_id.eq.${profile.id},liked_id.eq.$userId)');
+               await supabase.from('super_likes').delete().or('and(liker_id.eq.$userId,liked_id.eq.${profile.id}),and(liker_id.eq.${profile.id},liked_id.eq.$userId)');
              }
 
              if (mounted) {
@@ -1066,8 +1074,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       final userId = supabase.auth.currentUser?.id;
       
       if (userId != null) {
-        // 1. Delete the like I sent
+        // 1. Delete the like I sent (from BOTH tables)
         await supabase.from('likes')
+            .delete()
+            .eq('liker_id', userId)
+            .eq('liked_id', profile.id);
+        
+        await supabase.from('super_likes')
             .delete()
             .eq('liker_id', userId)
             .eq('liked_id', profile.id);
@@ -1083,6 +1096,55 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       }
     } catch (e) {
       print('❌ ERROR canceling like: $e');
+    }
+  }
+
+  Future<void> _unmatch(Profile profile) async {
+    // Show confirmation dialog
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Desfazer Match'),
+        content: Text('Deseja realmente desfazer o match com ${profile.name}? Vocês não poderão mais se comunicar.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Desfazer'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    print('💔 UNMATCH for: ${profile.name}');
+    try {
+      final supabase = Supabase.instance.client;
+      final userId = supabase.auth.currentUser?.id;
+
+      if (userId != null) {
+        // 1. Delete the match
+        await supabase.from('matches').delete()
+            .or('and(user1_id.eq.$userId,user2_id.eq.${profile.id}),and(user1_id.eq.${profile.id},user2_id.eq.$userId)');
+
+        // 2. Add both users to each other's passes
+        await supabase.from('passes').upsert({'user_id': userId, 'passed_id': profile.id});
+        await supabase.from('passes').upsert({'user_id': profile.id, 'passed_id': userId});
+
+        // 3. Clear cache
+        _interestFutures.clear();
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Match com ${profile.name} desfeito.')),
+          );
+          setState(() {}); // Force rebuild
+        }
+      }
+    } catch (e) {
+      print('❌ ERROR unmatching: $e');
     }
   }
 
@@ -1416,7 +1478,28 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Future<void> _deleteMatch(String matchId, String status) async {
     try {
       final supabase = Supabase.instance.client;
+      final userId = supabase.auth.currentUser?.id;
+
+      // Fetch match data to get both user IDs before deleting
+      final matchData = await supabase
+          .from('matches')
+          .select('user1_id, user2_id')
+          .eq('id', matchId)
+          .maybeSingle();
+
+      // Delete the match
       await supabase.from('matches').delete().eq('id', matchId);
+
+      // Add mutual passes so they don't see each other again
+      if (matchData != null && userId != null) {
+        final otherUserId = matchData['user1_id'] == userId
+            ? matchData['user2_id']
+            : matchData['user1_id'];
+
+        await supabase.from('passes').upsert({'user_id': userId, 'passed_id': otherUserId});
+        await supabase.from('passes').upsert({'user_id': otherUserId, 'passed_id': userId});
+      }
+
       await _refreshInterestTab(status);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -3155,16 +3238,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             onPressed: profiles.isEmpty ? null : _onLike,
             hasShadow: true,
           ),
-           // Botão Mensagem (Substituindo o Bolt)
-          _buildCircleButton(
-            icon: Icons.message_rounded, // Ícone de mensagem
-            color: Colors.purpleAccent,
-            size: 50,
-            iconSize: 22,
-            onPressed: () {
-              // TODO: Implementar envio de mensagem direta
-            },
-          ),
         ],
       ),
     );
@@ -3217,12 +3290,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         backgroundColor: Colors.grey[50],
         elevation: 0,
         centerTitle: false,
-        title: Padding(
-          padding: const EdgeInsets.only(left: 8.0),
-          child: Image.asset(
-            'assets/images/logo_horizontal.png',
-            height: 40,
-            fit: BoxFit.contain,
+        title: const Padding(
+          padding: EdgeInsets.only(left: 10.0),
+          child: Text(
+            'Par Cristão',
+            style: TextStyle(
+              color: Color(0xFF667eea),
+              fontWeight: FontWeight.bold,
+              fontSize: 26,
+              letterSpacing: 0.5,
+            ),
           ),
         ),
       ),
@@ -4193,19 +4270,21 @@ class _ProfileCardState extends State<ProfileCard> {
                 ),
               ),
 
-            // Gradiente Escuro
+            // Gradiente Escuro (Shadow elegante na parte inferior)
             Container(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
                   colors: [
-                    Colors.black.withOpacity(0.3), // Um pouco mais escuro em cima tb pro slider
+                    Colors.black.withOpacity(0.2), // Leve em cima para slider
                     Colors.transparent,
-                    Colors.black.withOpacity(0.4),
-                    Colors.black.withOpacity(0.9),
+                    Colors.transparent,
+                    Colors.black.withOpacity(0.5),
+                    Colors.black.withOpacity(0.85),
+                    Colors.black.withOpacity(0.95),
                   ],
-                  stops: const [0.0, 0.2, 0.7, 1.0],
+                  stops: const [0.0, 0.15, 0.45, 0.65, 0.85, 1.0],
                 ),
               ),
             ),
@@ -5010,7 +5089,7 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
 
           // Botões de Ação FLUTUANTES (Fixos na tela)
           Positioned(
-            bottom: 30,
+            bottom: 30 + MediaQuery.of(context).padding.bottom,
             left: 20,
             right: 20,
             child: Row(
