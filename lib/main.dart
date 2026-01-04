@@ -7,9 +7,18 @@ import 'package:novo_app/edit_profile_screen.dart'; // Import da tela de ediçã
 import 'package:novo_app/temp_profile_detail.dart'; // Import Profile Detail
 import 'package:novo_app/chat_screen.dart'; // Import Chat Screen
 import 'package:geolocator/geolocator.dart';
+import 'package:audioplayers/audioplayers.dart'; // For notification sounds
+
+import 'package:flutter/services.dart'; // Importante para controlar orientação
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Bloqueia a orientação apenas para retrato (vertical)
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown, // Opcional, se quiser permitir de cabeça para baixo
+  ]);
 
   await Supabase.initialize(
     url: SupabaseConfig.url,
@@ -61,6 +70,7 @@ class Profile {
   final int unreadCount;
   final String? lastMessage;
   final DateTime? lastMessageTime;
+  final bool isSuperLike; // Novo campo para identificar Super Like
 
   Profile({
     required this.id,
@@ -81,6 +91,7 @@ class Profile {
     this.unreadCount = 0,
     this.lastMessage,
     this.lastMessageTime,
+    this.isSuperLike = false,
   });
 }
 
@@ -172,7 +183,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   int _selectedIndex = 0; // Índice da aba selecionada
   
   // Search preferences
-  double _searchRadius = 250.0;
+  double _searchRadius = 500.0;
   RangeValues _ageRange = const RangeValues(18, 75);
   Set<String> _religionFilters = {'Católica', 'Evangélica', 'Ortodoxa', 'Outras denominações cristãs'};
   
@@ -191,6 +202,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   // Cache for interest futures to prevent re-fetching on every build
   final Map<String, Future<List<Profile>>> _interestFutures = {};
   
+  // Real-time subscription for matches
+  RealtimeChannel? _matchesChannel;
+  RealtimeChannel? _likesChannel;
+  RealtimeChannel? _superLikesChannel;
+  
+  // Audio player for notification sounds
+  final AudioPlayer _notificationPlayer = AudioPlayer();
+  bool _soundEnabled = true; // Sound notifications enabled by default
+  
   @override
   void initState() {
     super.initState();
@@ -202,13 +222,19 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _checkUserLocation();
     _fetchNotificationCount();
     _checkMissedMatches();
+    _subscribeToMatches(); // Subscribe to real-time match updates
   }
 
   Future<void> _checkMissedMatches() async {
     try {
       final supabase = Supabase.instance.client;
       final userId = supabase.auth.currentUser?.id;
-      if (userId == null) return;
+      if (userId == null) {
+        print('⚠️ _checkMissedMatches: No user logged in');
+        return;
+      }
+
+      print('🔍 Checking for unseen matches for user: $userId');
 
       // Check for matches where I am user1 and haven't seen it (unlikely with current logic but good for safety)
       // OR I am user2 and haven't seen it (common case)
@@ -218,22 +244,55 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           .select('*, p1:profiles!matches_user1_id_fkey(*), p2:profiles!matches_user2_id_fkey(*)')
           .or('and(user1_id.eq.$userId,user1_seen.eq.false),and(user2_id.eq.$userId,user2_seen.eq.false)');
       
-      if (unseenMatches != null && (unseenMatches as List).isNotEmpty) {
+      print('📊 Found ${(unseenMatches as List).length} unseen matches');
+      
+      if (unseenMatches != null && unseenMatches.isNotEmpty) {
         for (var match in unseenMatches) {
+          final matchId = match['id'];
           final isUser1 = match['user1_id'] == userId;
           final targetData = isUser1 ? match['p2'] : match['p1'];
+          final columnToUpdate = isUser1 ? 'user1_seen' : 'user2_seen';
+          
+          print('💡 Processing match $matchId (I am ${isUser1 ? "user1" : "user2"})');
           
           if (targetData != null) {
             final targetProfile = _mapProfile(targetData);
             
             // CRITICAL: Mark as seen FIRST, before showing dialog
             // This prevents the notification from appearing again if user closes app during animation
-            await supabase.from('matches').update({
-              isUser1 ? 'user1_seen' : 'user2_seen': true,
-            }).eq('id', match['id']);
+            try {
+              print('💾 Marking match $matchId as seen ($columnToUpdate = true)...');
+              
+              final updateResult = await supabase
+                  .from('matches')
+                  .update({columnToUpdate: true})
+                  .eq('id', matchId)
+                  .select(); // Use .select() to verify the update worked
+              
+              print('✅ Match $matchId marked as seen successfully');
+              print('   Update result: $updateResult');
+              
+              // Verify the update by checking the value
+              if (updateResult != null && (updateResult as List).isNotEmpty) {
+                final updatedMatch = updateResult[0];
+                final seenValue = updatedMatch[columnToUpdate];
+                if (seenValue == true) {
+                  print('✅ Verified: $columnToUpdate is now true');
+                } else {
+                  print('⚠️ WARNING: $columnToUpdate is still $seenValue after update!');
+                }
+              }
+              
+            } catch (updateError) {
+              print('❌ ERROR updating match $matchId: $updateError');
+              // Don't show the dialog if we couldn't mark it as seen
+              // This prevents the match from being shown repeatedly
+              continue;
+            }
             
             if (mounted) {
               // Now show the dialog
+              print('🎉 Showing match dialog for ${targetProfile.name}');
               _showReciprocalInterestDialog(targetProfile);
               
               // Break after one to avoid UI chaos. Ideally, we'd queue them.
@@ -241,10 +300,259 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             }
           }
         }
+      } else {
+        print('✅ No unseen matches found');
       }
     } catch (e) {
-      print('Erro ao verificar matches perdidos: $e');
+      print('❌ ERROR in _checkMissedMatches: $e');
+      print('   Stack trace: ${StackTrace.current}');
     }
+  }
+
+  /// Subscribe to real-time match updates
+  /// This will show an instant notification when someone likes you back
+  void _subscribeToMatches() {
+    final supabase = Supabase.instance.client;
+    final userId = supabase.auth.currentUser?.id;
+    
+    if (userId == null) {
+      print('⚠️ _subscribeToMatches: No user logged in');
+      return;
+    }
+
+    print('🔔 Subscribing to real-time match updates for user: $userId');
+
+    _matchesChannel = supabase
+        .channel('matches_realtime')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'matches',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'user2_id',
+            value: userId,
+          ),
+          callback: (payload) async {
+            print('🎉 REAL-TIME: New match detected!');
+            print('   Payload: ${payload.newRecord}');
+            
+            final matchData = payload.newRecord;
+            final matchId = matchData['id'];
+            final user1Id = matchData['user1_id'];
+            
+            try {
+              // Fetch the profile of the person who created the match
+              final profileData = await supabase
+                  .from('profiles')
+                  .select()
+                  .eq('id', user1Id)
+                  .maybeSingle();
+              
+              if (profileData != null && mounted) {
+                final targetProfile = _mapProfile(profileData);
+                
+                // Mark this match as seen immediately
+                print('💾 Marking new match $matchId as seen (user2_seen = true)...');
+                await supabase
+                    .from('matches')
+                    .update({'user2_seen': true})
+                    .eq('id', matchId);
+                
+                print('🎉 Showing real-time match dialog for ${targetProfile.name}');
+                _showReciprocalInterestDialog(targetProfile);
+                
+                // Refresh interest cache
+                _interestFutures.clear();
+              }
+            } catch (e) {
+              print('❌ ERROR handling real-time match: $e');
+            }
+          },
+        )
+        .subscribe();
+
+    print('✅ Real-time match subscription active');
+    
+    // Subscribe to likes
+    _subscribeToLikes();
+    
+    // Subscribe to super likes
+    _subscribeToSuperLikes();
+  }
+
+  /// Subscribe to real-time likes
+  void _subscribeToLikes() {
+    final supabase = Supabase.instance.client;
+    final userId = supabase.auth.currentUser?.id;
+    if (userId == null) return;
+
+    print('💖 Subscribing to real-time likes for user: $userId');
+
+    _likesChannel = supabase
+        .channel('likes_realtime')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'likes',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'liked_id',
+            value: userId,
+          ),
+          callback: (payload) async {
+            print('💖 REAL-TIME: Someone liked you!');
+            print('   Payload: ${payload.newRecord}');
+            
+            final likeData = payload.newRecord;
+            final likerId = likeData['liker_id'];
+            
+            try {
+              final profileData = await supabase
+                  .from('profiles')
+                  .select()
+                  .eq('id', likerId)
+                  .maybeSingle();
+              
+              if (profileData != null && mounted) {
+                final likerProfile = _mapProfile(profileData);
+                
+                // Play notification sound (if enabled)
+                if (_soundEnabled) {
+                  try {
+                    await _notificationPlayer.play(UrlSource('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3'));
+                  } catch (e) {
+                    print('⚠️ Could not play notification sound: $e');
+                  }
+                }
+                
+                // Update notification count
+                setState(() {
+                  _notificationCount++;
+                });
+                
+                // Show a snackbar notification
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Row(
+                      children: [
+                        const Icon(Icons.favorite, color: Colors.white),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text('💖 ${likerProfile.name} gostou de você!'),
+                        ),
+                      ],
+                    ),
+                    backgroundColor: Colors.pinkAccent,
+                    duration: const Duration(seconds: 4),
+                    action: SnackBarAction(
+                      label: 'Ver',
+                      textColor: Colors.white,
+                      onPressed: () {
+                        setState(() => _selectedIndex = 1); // Go to interests tab
+                      },
+                    ),
+                  ),
+                );
+                
+                // Refresh interest cache
+                _interestFutures.clear();
+              }
+            } catch (e) {
+              print('❌ ERROR handling real-time like: $e');
+            }
+          },
+        )
+        .subscribe();
+
+    print('✅ Real-time likes subscription active');
+  }
+
+  /// Subscribe to real-time super likes
+  void _subscribeToSuperLikes() {
+    final supabase = Supabase.instance.client;
+    final userId = supabase.auth.currentUser?.id;
+    if (userId == null) return;
+
+    print('⭐ Subscribing to real-time super likes for user: $userId');
+
+    _superLikesChannel = supabase
+        .channel('super_likes_realtime')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'super_likes',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'liked_id',
+            value: userId,
+          ),
+          callback: (payload) async {
+            print('⭐ REAL-TIME: Someone super liked you!');
+            print('   Payload: ${payload.newRecord}');
+            
+            final likeData = payload.newRecord;
+            final likerId = likeData['liker_id'];
+            
+            try {
+              final profileData = await supabase
+                  .from('profiles')
+                  .select()
+                  .eq('id', likerId)
+                  .maybeSingle();
+              
+              if (profileData != null && mounted) {
+                final likerProfile = _mapProfile(profileData);
+                
+                // Play a more prominent notification sound for super likes (if enabled)
+                if (_soundEnabled) {
+                  try {
+                    await _notificationPlayer.play(UrlSource('https://assets.mixkit.co/active_storage/sfx/2867/2867-preview.mp3'));
+                  } catch (e) {
+                    print('⚠️ Could not play notification sound: $e');
+                  }
+                }
+                
+                // Update notification count
+                setState(() {
+                  _notificationCount++;
+                });
+                
+                // Show a more prominent snackbar for super likes
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Row(
+                      children: [
+                        const Icon(Icons.star, color: Colors.yellow),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text('⭐ ${likerProfile.name} deu SUPER LIKE em você!'),
+                        ),
+                      ],
+                    ),
+                    backgroundColor: Colors.deepPurple,
+                    duration: const Duration(seconds: 5),
+                    action: SnackBarAction(
+                      label: 'Ver',
+                      textColor: Colors.white,
+                      onPressed: () {
+                        setState(() => _selectedIndex = 1); // Go to interests tab
+                      },
+                    ),
+                  ),
+                );
+                
+                // Refresh interest cache
+                _interestFutures.clear();
+              }
+            } catch (e) {
+              print('❌ ERROR handling real-time super like: $e');
+            }
+          },
+        )
+        .subscribe();
+
+    print('✅ Real-time super likes subscription active');
   }
 
   Future<void> _fetchNotificationCount() async {
@@ -325,7 +633,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       double? myLng = myProfileData['longitude'];
       
       // Load search preferences (with defaults)
-      int searchRadius = myProfileData['search_radius'] ?? 250;
+      int searchRadius = myProfileData['search_radius'] ?? 500;
       int ageMin = myProfileData['age_min'] ?? 18;
       int ageMax = myProfileData['age_max'] ?? 75;
       List<String> religionFilters = myProfileData['religion_filters'] != null 
@@ -436,6 +744,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   @override
   void dispose() {
     _animationController.dispose();
+    _matchesChannel?.unsubscribe();
+    _likesChannel?.unsubscribe();
+    _superLikesChannel?.unsubscribe();
     super.dispose();
   }
 
@@ -576,6 +887,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           .select()
           .eq('liker_id', targetProfile.id)
           .eq('liked_id', userId)
+          .limit(1)
           .maybeSingle();
       
       final reciprocalSuper = await supabase
@@ -583,6 +895,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           .select()
           .eq('liker_id', targetProfile.id)
           .eq('liked_id', userId)
+          .limit(1)
           .maybeSingle();
 
       print('DEBUG: Reciprocal Like from ${targetProfile.name}? ${reciprocalLike != null}');
@@ -599,14 +912,24 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       if (reciprocalLike != null || reciprocalSuper != null) {
         print('💖 IT\'S A MATCH!');
         
-        // Save match to database
-        await supabase.from('matches').insert({
-          'user1_id': userId,
-          'user2_id': targetProfile.id,
-          'created_at': DateTime.now().toIso8601String(),
-          'user1_seen': true, // I am seeing it right now
-          'user2_seen': false, // The other person hasn't seen it yet
-        });
+        // Check if match already exists to avoid unique violation error
+        final existingMatch = await supabase
+            .from('matches')
+            .select()
+            .or('and(user1_id.eq.$userId,user2_id.eq.${targetProfile.id}),and(user1_id.eq.${targetProfile.id},user2_id.eq.$userId)')
+            .limit(1)
+            .maybeSingle();
+            
+        if (existingMatch == null) {
+          // Save match to database
+          await supabase.from('matches').insert({
+            'user1_id': userId,
+            'user2_id': targetProfile.id,
+            'created_at': DateTime.now().toIso8601String(),
+            'user1_seen': true, // I am seeing it right now
+            'user2_seen': false, // The other person hasn't seen it yet
+          });
+        }
 
         if (mounted) {
            _showReciprocalInterestDialog(targetProfile);
@@ -686,6 +1009,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             .select()
             .eq('liker_id', profile.id)
             .eq('liked_id', userId)
+            .eq('liked_id', userId)
+            .limit(1)
             .maybeSingle();
         
         final reciprocalSuper = await supabase
@@ -693,6 +1018,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             .select()
             .eq('liker_id', profile.id)
             .eq('liked_id', userId)
+            .limit(1)
             .maybeSingle();
 
         // 2. Save Super Like
@@ -705,13 +1031,22 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         if (reciprocalLike != null || reciprocalSuper != null) {
              print('💖 IT\'S A MATCH (via Super Like)!');
              
-             await supabase.from('matches').insert({
-               'user1_id': userId,
-               'user2_id': profile.id,
-               'created_at': DateTime.now().toIso8601String(),
-               'user1_seen': true,
-               'user2_seen': false,
-             });
+             final existingMatch = await supabase
+                .from('matches')
+                .select()
+                .or('and(user1_id.eq.$userId,user2_id.eq.${profile.id}),and(user1_id.eq.${profile.id},user2_id.eq.$userId)')
+                .limit(1)
+                .maybeSingle();
+
+             if (existingMatch == null) {
+               await supabase.from('matches').insert({
+                 'user1_id': userId,
+                 'user2_id': profile.id,
+                 'created_at': DateTime.now().toIso8601String(),
+                 'user1_seen': true,
+                 'user2_seen': false,
+               });
+             }
 
              if (mounted) {
                 _showReciprocalInterestDialog(profile);
@@ -1094,181 +1429,144 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
   
   Widget _buildInterestCard(Profile profile, String status, {String? matchId}) {
+    // Status-based colors and icons
+    final Map<String, Map<String, dynamic>> statusConfig = {
+      'recebidos': {'color': const Color(0xFFFF6B6B), 'icon': Icons.favorite, 'label': 'Curtiu você'},
+      'mutuos': {'color': const Color(0xFF667eea), 'icon': Icons.favorite, 'label': 'Match!'},
+      'super': {'color': const Color(0xFFFFD93D), 'icon': Icons.star, 'label': 'Super Like'},
+      'enviados': {'color': const Color(0xFF6BCB77), 'icon': Icons.send, 'label': 'Enviado'},
+    };
+    final config = statusConfig[status] ?? statusConfig['recebidos']!;
+    final Color statusColor = config['color'] as Color;
+    final IconData statusIconKey = config['icon'] as IconData; // Renamed to avoid final conflict if I wanted to reassign
+    final String statusLabelKey = config['label'] as String;
+    
+    // Override for Sent Super Likes
+    Color finalColor = statusColor;
+    IconData finalIcon = statusIconKey;
+    String finalLabel = statusLabelKey;
+
+    if (status == 'enviados' && profile.isSuperLike) {
+      finalColor = const Color(0xFFFFD93D); // Gold
+      finalIcon = Icons.star;
+      finalLabel = 'Super Like Enviado';
+    }
+
     return Container(
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [BoxShadow(color: finalColor.withOpacity(0.3), blurRadius: 15, offset: const Offset(0, 6))],
       ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(20),
         child: Material(
           color: Colors.transparent,
           child: InkWell(
             onTap: status == 'mutuos' ? null : () async {
-              final action = await Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => ProfileDetailScreen(profile: profile),
-                ),
-              );
-              
-              if (action == 'like') {
-                await _processLike(profile);
-                _refreshInterestTab(status);
-              } else if (action == 'dislike') {
-                await _onDislikeFromProfile(profile);
-                _refreshInterestTab(status);
-              } else if (action == 'super') {
-                await _onSuperLikeFromProfile(profile);
-                _refreshInterestTab(status);
-              }
+              final action = await Navigator.push(context, MaterialPageRoute(builder: (context) => ProfileDetailScreen(profile: profile)));
+              if (action == 'like') { await _processLike(profile); _refreshInterestTab(status); }
+              else if (action == 'dislike') { await _onDislikeFromProfile(profile); _refreshInterestTab(status); }
+              else if (action == 'super') { await _onSuperLikeFromProfile(profile); _refreshInterestTab(status); }
             },
             child: Stack(
               fit: StackFit.expand,
               children: [
-                // Profile Image
+                // Image
                 Image.network(
-                  profile.imageUrls.isNotEmpty
-                      ? profile.imageUrls.first
-                      : 'https://via.placeholder.com/300',
+                  profile.imageUrls.isNotEmpty ? profile.imageUrls.first : 'https://via.placeholder.com/300',
                   fit: BoxFit.cover,
+                  errorBuilder: (ctx, e, st) => Container(color: Colors.grey[300], child: Icon(Icons.person, size: 60, color: Colors.grey[400])),
                 ),
-                // Gradient Overlay
+                // Gradient
                 Container(
                   decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        Colors.transparent,
-                        Colors.black.withOpacity(0.7),
-                      ],
-                    ),
+                    gradient: LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, stops: const [0.0, 0.4, 1.0],
+                      colors: [Colors.black.withOpacity(0.2), Colors.transparent, Colors.black.withOpacity(0.85)]),
+                  ),
+                ),
+                // Status Badge
+                Positioned(
+                  top: 10, right: 10,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(color: finalColor, borderRadius: BorderRadius.circular(20),
+                      boxShadow: [BoxShadow(color: finalColor.withOpacity(0.5), blurRadius: 8, offset: const Offset(0, 2))]),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(finalIcon, color: Colors.white, size: 12),
+                      const SizedBox(width: 4),
+                      Text(finalLabel, style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                    ]),
                   ),
                 ),
                 // Profile Info
                 Positioned(
-                  bottom: 12,
-                  left: 12,
-                  right: 12,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      GestureDetector(
-                        onTap: () async {
-                          final action = await Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => ProfileDetailScreen(profile: profile),
-                            ),
-                          );
-                          
-                          if (action == 'like') {
-                            await _processLike(profile);
-                            _refreshInterestTab(status);
-                          } else if (action == 'dislike') {
-                            await _onDislikeFromProfile(profile);
-                            _refreshInterestTab(status);
-                          } else if (action == 'super') {
-                            await _onSuperLikeFromProfile(profile);
-                            _refreshInterestTab(status);
-                          }
-                        },
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '${profile.name}, ${profile.age}',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              profile.city,
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(0.8),
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      // Action Buttons for Mutuos (Match)
+                  bottom: 0, left: 0, right: 0,
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text('${profile.name}, ${profile.age}', style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold,
+                        shadows: [Shadow(color: Colors.black54, blurRadius: 4)]), overflow: TextOverflow.ellipsis),
+                      const SizedBox(height: 3),
+                      Row(children: [
+                        const Icon(Icons.location_on, color: Colors.white70, size: 12),
+                        const SizedBox(width: 3),
+                        Expanded(child: Text(profile.city, style: const TextStyle(color: Colors.white70, fontSize: 11), overflow: TextOverflow.ellipsis)),
+                      ]),
+                      // Match Actions
                       if (status == 'mutuos' && matchId != null) ...[
                         const SizedBox(height: 10),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: ElevatedButton.icon(
-                                onPressed: () {
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (context) => ChatScreen(
-                                        matchId: matchId,
-                                        targetProfile: profile,
-                                      ),
-                                    ),
-                                  );
-                                },
-                                icon: const Icon(Icons.chat_bubble_outline, size: 16),
-                                label: const Text('Chat', style: TextStyle(fontSize: 11)),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFF667eea),
-                                  foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(vertical: 6),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
+                        Row(children: [
+                          Expanded(child: ElevatedButton.icon(
+                            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (ctx) => ChatScreen(matchId: matchId, targetProfile: profile))),
+                            icon: const Icon(Icons.chat_bubble_rounded, size: 14),
+                            label: const Text('Chat', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF667eea), foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 8), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)), elevation: 4),
+                          )),
+                          const SizedBox(width: 8),
+                          GestureDetector(
+                            onTap: () => showDialog(context: context, builder: (ctx) => AlertDialog(
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                              title: const Text('Excluir Match'), content: Text('Deseja remover ${profile.name} dos seus matches?'),
+                              actions: [
+                                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
+                                TextButton(onPressed: () { Navigator.pop(ctx); _deleteMatch(matchId, status); }, child: const Text('Excluir', style: TextStyle(color: Colors.red))),
+                              ],
+                            )),
+                            child: Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.red.withOpacity(0.9), borderRadius: BorderRadius.circular(10)),
+                              child: const Icon(Icons.delete_outline, color: Colors.white, size: 18)),
+                          ),
+                        ]),
+                      ],
+                      // Cancel Sent Like
+                      if (status == 'enviados') ...[
+                        const SizedBox(height: 10),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            onPressed: () => showDialog(context: context, builder: (ctx) => AlertDialog(
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                              title: Row(children: [Icon(Icons.undo, color: Colors.orange[700]), const SizedBox(width: 8), const Text('Cancelar Curtida')]),
+                              content: Text('Deseja cancelar a curtida enviada para ${profile.name}?'),
+                              actions: [
+                                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Voltar')),
+                                ElevatedButton(
+                                  onPressed: () async { Navigator.pop(ctx); await _cancelSentLike(profile); _refreshInterestTab(status);
+                                    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Curtida para ${profile.name} cancelada'), backgroundColor: Colors.orange));
+                                  },
+                                  style: ElevatedButton.styleFrom(backgroundColor: Colors.orange, foregroundColor: Colors.white),
+                                  child: const Text('Cancelar Curtida'),
                                 ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            GestureDetector(
-                              onTap: () {
-                                showDialog(
-                                  context: context,
-                                  builder: (ctx) => AlertDialog(
-                                    title: const Text('Excluir Match'),
-                                    content: Text('Deseja remover ${profile.name} dos seus matches?'),
-                                    actions: [
-                                      TextButton(
-                                        onPressed: () => Navigator.pop(ctx),
-                                        child: const Text('Cancelar'),
-                                      ),
-                                      TextButton(
-                                        onPressed: () {
-                                          Navigator.pop(ctx);
-                                          _deleteMatch(matchId, status);
-                                        },
-                                        child: const Text('Excluir', style: TextStyle(color: Colors.red)),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              },
-                              child: Container(
-                                padding: const EdgeInsets.all(8),
-                                decoration: BoxDecoration(
-                                  color: Colors.red.withOpacity(0.8),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: const Icon(Icons.delete_outline, color: Colors.white, size: 18),
-                              ),
-                            ),
-                          ],
+                              ],
+                            )),
+                            icon: const Icon(Icons.undo, size: 14),
+                            label: const Text('Cancelar', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange.withOpacity(0.9), foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 8), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)), elevation: 4),
+                          ),
                         ),
                       ],
-                    ],
+                    ]),
                   ),
                 ),
               ],
@@ -1277,6 +1575,21 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         ),
       ),
     );
+  }
+
+  /// Cancel a sent like
+  Future<void> _cancelSentLike(Profile profile) async {
+    print('🔄 Canceling sent like for: ${profile.name}');
+    try {
+      final supabase = Supabase.instance.client;
+      final userId = supabase.auth.currentUser?.id;
+      if (userId != null) {
+        await supabase.from('likes').delete().eq('liker_id', userId).eq('liked_id', profile.id);
+        await supabase.from('super_likes').delete().eq('liker_id', userId).eq('liked_id', profile.id);
+        print('✅ Sent like canceled successfully');
+        _interestFutures.clear();
+      }
+    } catch (e) { print('❌ ERROR canceling sent like: $e'); }
   }
   
   Future<List<Profile>> _fetchInterestProfiles(String status) async {
@@ -1388,17 +1701,34 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         }
       } else if (status == 'enviados') {
         // Likes that I sent
-        final data = await supabase
+        final likesData = await supabase
             .from('likes')
             .select('liked_id, receiver:profiles!likes_liked_id_fkey(*)')
             .eq('liker_id', userId);
         
-        for (var item in data) {
+        final superLikesData = await supabase
+            .from('super_likes')
+            .select('liked_id, receiver:profiles!super_likes_liked_id_fkey(*)')
+            .eq('liker_id', userId);
+
+        // Process standard likes
+        for (var item in likesData) {
           final profileData = item['receiver'];
           if (profileData != null) {
-            final profile = _mapProfile(profileData);
-            // Filter out if matched (those are in 'mutuos')
+            final profile = _mapProfile(profileData, isSuperLike: false);
             if (!matchedUserIds.contains(profile.id)) {
+              profiles.add(profile);
+            }
+          }
+        }
+        
+        // Process super likes
+        for (var item in superLikesData) {
+          final profileData = item['receiver'];
+          if (profileData != null) {
+            final profile = _mapProfile(profileData, isSuperLike: true);
+            // Avoid duplicates if user somehow managed to like and superlike (shouldn't happen but key)
+             if (!profiles.any((p) => p.id == profile.id) && !matchedUserIds.contains(profile.id)) {
               profiles.add(profile);
             }
           }
@@ -1413,7 +1743,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
   }
 
-  Profile _mapProfile(Map<String, dynamic> data, {String? matchId, int unreadCount = 0, String? lastMessage, DateTime? lastMessageTime}) {
+  Profile _mapProfile(Map<String, dynamic> data, {String? matchId, int unreadCount = 0, String? lastMessage, DateTime? lastMessageTime, bool isSuperLike = false}) {
     return Profile(
       id: data['id'],
       name: data['name'] ?? 'Usuário',
@@ -1432,210 +1762,609 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       unreadCount: unreadCount,
       lastMessage: lastMessage,
       lastMessageTime: lastMessageTime,
+      isSuperLike: isSuperLike,
     );
   }
 
-  // --- Aba de Chat (Mensagens) ---
+  // --- Aba de Chat (Mensagens) - Premium Design ---
   Widget _buildMessagesTab() {
     return FutureBuilder<List<Profile>>(
       future: _interestFutures['mutuos'] ?? _fetchInterestProfiles('mutuos'),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-
-        final profiles = snapshot.data ?? [];
-
-        if (profiles.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.chat_bubble_outline, size: 60, color: Colors.grey[300]),
-                const SizedBox(height: 16),
-                Text(
-                  'Nenhuma conversa ainda',
-                  style: TextStyle(color: Colors.grey[500], fontSize: 16),
-                ),
-              ],
+          return Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Color(0xFF667eea), Color(0xFF764ba2)],
+              ),
+            ),
+            child: const Center(
+              child: CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation(Colors.white),
+              ),
             ),
           );
         }
 
-        return Scaffold(
-          backgroundColor: Colors.white,
-          appBar: AppBar(
-            title: const Text(
-              'Mensagens',
-              style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
+        final profiles = snapshot.data ?? [];
+
+        return Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Color(0xFF667eea),
+                Color(0xFF764ba2),
+                Color(0xFF6B8DD6),
+              ],
             ),
-            backgroundColor: Colors.white,
-            elevation: 0,
-            actions: [
-              IconButton(onPressed: () {}, icon: const Icon(Icons.search, color: Colors.grey)),
-            ],
           ),
-          body: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'Minhas Conversas',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.grey[800]),
+          child: SafeArea(
+            child: Column(
+              children: [
+                // Premium Header
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 20, 24, 16),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Conversas',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 32,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: -0.5,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            profiles.isEmpty
+                                ? 'Encontre seu par perfeito'
+                                : '${profiles.length} ${profiles.length == 1 ? 'conexão' : 'conexões'}',
+                            style: TextStyle(
+                              color: Colors.white.withOpacity(0.8),
+                              fontSize: 15,
+                              fontWeight: FontWeight.w400,
+                            ),
+                          ),
+                        ],
+                      ),
+                      // Search Button with glassmorphism
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: Colors.white.withOpacity(0.3),
+                            width: 1,
+                          ),
+                        ),
+                        child: const Icon(
+                          Icons.search_rounded,
+                          color: Colors.white,
+                          size: 24,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // Messages Container
+                Expanded(
+                  child: Container(
+                    margin: const EdgeInsets.only(top: 8),
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.only(
+                        topLeft: Radius.circular(32),
+                        topRight: Radius.circular(32),
+                      ),
+                    ),
+                    child: profiles.isEmpty
+                        ? _buildEmptyMessagesState()
+                        : _buildMessagesList(profiles),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildEmptyMessagesState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(40),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            // Animated Heart Icon Container
+            Container(
+              width: 120,
+              height: 120,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    const Color(0xFF667eea).withOpacity(0.1),
+                    const Color(0xFF764ba2).withOpacity(0.1),
+                  ],
+                ),
+                shape: BoxShape.circle,
+              ),
+              child: Center(
+                child: Container(
+                  width: 80,
+                  height: 80,
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFF667eea), Color(0xFF764ba2)],
+                    ),
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF667eea).withOpacity(0.4),
+                        blurRadius: 20,
+                        offset: const Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.favorite_rounded,
+                    color: Colors.white,
+                    size: 40,
                   ),
                 ),
               ),
-              Expanded(
-                child: ListView.separated(
-                  itemCount: profiles.length,
-                  separatorBuilder: (context, index) => const Divider(indent: 80, height: 1),
-                  itemBuilder: (context, index) {
-                    final profile = profiles[index];
-                    
-                    return ListTile(
-                      onTap: () async {
-                        if (profile.matchId != null) {
-                          await Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => ChatScreen(
-                                matchId: profile.matchId!,
-                                targetProfile: profile,
-                              ),
+            ),
+            const SizedBox(height: 32),
+            const Text(
+              'Nenhuma conversa ainda',
+              style: TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF2D3748),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Quando você tiver um match, suas\nconversas aparecerão aqui',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 16,
+                color: Colors.grey[600],
+                height: 1.5,
+              ),
+            ),
+            const SizedBox(height: 32),
+            // CTA Button
+            Container(
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF667eea), Color(0xFF764ba2)],
+                ),
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF667eea).withOpacity(0.4),
+                    blurRadius: 16,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+              ),
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: () => _onItemTapped(0), // Go to swipe tab
+                  borderRadius: BorderRadius.circular(16),
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.style_rounded, color: Colors.white),
+                        SizedBox(width: 12),
+                        Text(
+                          'Começar a Explorar',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMessagesList(List<Profile> profiles) {
+    return Column(
+      children: [
+        // Section Header
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 24, 24, 8),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF667eea).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(
+                      Icons.chat_bubble_rounded,
+                      color: Color(0xFF667eea),
+                      size: 18,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Text(
+                    'Minhas Conversas',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                      color: Color(0xFF2D3748),
+                    ),
+                  ),
+                ],
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF667eea).withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  '${profiles.length}',
+                  style: const TextStyle(
+                    color: Color(0xFF667eea),
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        // Messages List
+        Expanded(
+          child: RefreshIndicator(
+            onRefresh: () => _refreshInterestTab('mutuos'),
+            color: const Color(0xFF667eea),
+            child: ListView.builder(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              itemCount: profiles.length,
+              itemBuilder: (context, index) {
+                final profile = profiles[index];
+                return _buildPremiumMessageCard(profile, index);
+              },
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPremiumMessageCard(Profile profile, int index) {
+    final bool hasUnread = profile.unreadCount > 0;
+    
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: hasUnread ? const Color(0xFFF8F4FF) : Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: hasUnread 
+              ? const Color(0xFF667eea).withOpacity(0.3)
+              : Colors.grey.withOpacity(0.1),
+          width: 1.5,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: hasUnread 
+                ? const Color(0xFF667eea).withOpacity(0.15)
+                : Colors.black.withOpacity(0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () async {
+            if (profile.matchId != null) {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => ChatScreen(
+                    matchId: profile.matchId!,
+                    targetProfile: profile,
+                  ),
+                ),
+              );
+              _refreshInterestTab('mutuos');
+            }
+          },
+          borderRadius: BorderRadius.circular(20),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                // Profile Avatar with Online Indicator
+                Stack(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(3),
+                      decoration: BoxDecoration(
+                        gradient: hasUnread
+                            ? const LinearGradient(
+                                colors: [Color(0xFF667eea), Color(0xFF764ba2)],
+                              )
+                            : null,
+                        color: hasUnread ? null : Colors.grey[300],
+                        shape: BoxShape.circle,
+                      ),
+                      child: Container(
+                        padding: const EdgeInsets.all(2),
+                        decoration: const BoxDecoration(
+                          color: Colors.white,
+                          shape: BoxShape.circle,
+                        ),
+                        child: CircleAvatar(
+                          radius: 28,
+                          backgroundImage: NetworkImage(
+                            profile.imageUrls.isNotEmpty
+                                ? profile.imageUrls.first
+                                : 'https://via.placeholder.com/150',
+                          ),
+                        ),
+                      ),
+                    ),
+                    // Online indicator
+                    if (profile.isOnline)
+                      Positioned(
+                        right: 2,
+                        bottom: 2,
+                        child: Container(
+                          width: 16,
+                          height: 16,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF10B981),
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 3),
+                          ),
+                        ),
+                      ),
+                    // Unread Badge
+                    if (hasUnread)
+                      Positioned(
+                        right: 0,
+                        top: 0,
+                        child: Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: const BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [Color(0xFFFF6B6B), Color(0xFFFF8E8E)],
                             ),
-                          );
-                          _refreshInterestTab('mutuos'); 
-                        }
-                      },
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                      leading: Stack(
-                        children: [
-                          CircleAvatar(
-                            radius: 28,
-                            backgroundImage: NetworkImage(
-                              profile.imageUrls.isNotEmpty 
-                                  ? profile.imageUrls.first 
-                                  : 'https://via.placeholder.com/150'
+                            shape: BoxShape.circle,
+                            boxShadow: [
+                              BoxShadow(
+                                color: Color(0x40FF6B6B),
+                                blurRadius: 8,
+                                offset: Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          constraints: const BoxConstraints(
+                            minWidth: 22,
+                            minHeight: 22,
+                          ),
+                          child: Center(
+                            child: Text(
+                              profile.unreadCount > 9 ? '9+' : '${profile.unreadCount}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
                           ),
-                          if (profile.unreadCount > 0)
-                            Positioned(
-                              right: 0,
-                              top: 0,
-                              child: Container(
-                                padding: const EdgeInsets.all(4),
-                                decoration: const BoxDecoration(
-                                  color: Colors.red,
-                                  shape: BoxShape.circle,
-                                ),
-                                constraints: const BoxConstraints(
-                                  minWidth: 16,
-                                  minHeight: 16,
-                                ),
-                                child: Text(
-                                  '${profile.unreadCount}',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                  textAlign: TextAlign.center,
-                                ),
-                              ),
-                            ),
-                        ],
+                        ),
                       ),
-                      title: Row(
+                  ],
+                ),
+                const SizedBox(width: 16),
+                // Message Content
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text(
                             profile.name,
                             style: TextStyle(
-                              fontWeight: profile.unreadCount > 0 ? FontWeight.bold : FontWeight.normal,
-                              fontSize: 16,
+                              fontWeight: hasUnread ? FontWeight.bold : FontWeight.w600,
+                              fontSize: 17,
+                              color: const Color(0xFF2D3748),
                             ),
                           ),
                           if (profile.lastMessageTime != null)
-                            Text(
-                              '${profile.lastMessageTime!.hour}:${profile.lastMessageTime!.minute.toString().padLeft(2, '0')}',
-                              style: TextStyle(color: Colors.grey[500], fontSize: 12),
-                            ),
-                        ],
-                      ),
-                      subtitle: Text(
-                        profile.lastMessage ?? 'Toque para conversar',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: profile.unreadCount > 0 ? Colors.black87 : Colors.grey[600],
-                          fontWeight: profile.unreadCount > 0 ? FontWeight.w600 : FontWeight.normal,
-                        ),
-                      ),
-                      trailing: PopupMenuButton<String>(
-                        onSelected: (value) async {
-                          if (value == 'clear') {
-                            if (profile.matchId != null) {
-                              await _clearChat(profile.matchId!);
-                            }
-                          } else if (value == 'delete') {
-                            showDialog(
-                              context: context,
-                              builder: (ctx) => AlertDialog(
-                                title: const Text('Desfazer Match'),
-                                content: Text('Tem certeza que deseja desfazer o match com ${profile.name}?'),
-                                actions: [
-                                  TextButton(
-                                    onPressed: () => Navigator.pop(ctx),
-                                    child: const Text('Cancelar'),
-                                  ),
-                                  TextButton(
-                                    onPressed: () {
-                                      Navigator.pop(ctx);
-                                      if (profile.matchId != null) {
-                                        _deleteMatch(profile.matchId!, 'mutuos');
-                                      }
-                                    },
-                                    child: const Text('Desfazer Match', style: TextStyle(color: Colors.red)),
-                                  ),
-                                ],
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: hasUnread
+                                    ? const Color(0xFF667eea).withOpacity(0.1)
+                                    : Colors.grey.withOpacity(0.1),
+                                borderRadius: BorderRadius.circular(8),
                               ),
-                            );
-                          }
-                        },
-                        itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
-                          const PopupMenuItem<String>(
-                            value: 'clear',
-                            child: Row(
-                              children: [
-                                Icon(Icons.cleaning_services, size: 20, color: Colors.grey),
-                                SizedBox(width: 8),
-                                Text('Limpar Conversa'),
-                              ],
+                              child: Text(
+                                '${profile.lastMessageTime!.hour}:${profile.lastMessageTime!.minute.toString().padLeft(2, '0')}',
+                                style: TextStyle(
+                                  color: hasUnread
+                                      ? const Color(0xFF667eea)
+                                      : Colors.grey[500],
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              profile.lastMessage ?? 'Toque para iniciar conversa ✨',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: hasUnread ? const Color(0xFF4A5568) : Colors.grey[600],
+                                fontWeight: hasUnread ? FontWeight.w500 : FontWeight.normal,
+                                fontSize: 14,
+                              ),
                             ),
                           ),
-                          const PopupMenuItem<String>(
-                            value: 'delete',
-                            child: Row(
-                              children: [
-                                Icon(Icons.person_remove, size: 20, color: Colors.red),
-                                SizedBox(width: 8),
-                                Text('Desfazer Match', style: TextStyle(color: Colors.red)),
-                              ],
+                          const SizedBox(width: 8),
+                          // Actions Menu
+                          PopupMenuButton<String>(
+                            onSelected: (value) async {
+                              if (value == 'clear') {
+                                if (profile.matchId != null) {
+                                  await _clearChat(profile.matchId!);
+                                }
+                              } else if (value == 'delete') {
+                                showDialog(
+                                  context: context,
+                                  builder: (ctx) => AlertDialog(
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(20),
+                                    ),
+                                    title: Row(
+                                      children: [
+                                        Container(
+                                          padding: const EdgeInsets.all(8),
+                                          decoration: BoxDecoration(
+                                            color: Colors.red.withOpacity(0.1),
+                                            borderRadius: BorderRadius.circular(10),
+                                          ),
+                                          child: const Icon(Icons.person_remove, color: Colors.red, size: 20),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        const Text('Desfazer Match'),
+                                      ],
+                                    ),
+                                    content: Text(
+                                      'Tem certeza que deseja desfazer o match com ${profile.name}?',
+                                      style: const TextStyle(fontSize: 15),
+                                    ),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () => Navigator.pop(ctx),
+                                        child: Text(
+                                          'Cancelar',
+                                          style: TextStyle(color: Colors.grey[600]),
+                                        ),
+                                      ),
+                                      ElevatedButton(
+                                        onPressed: () {
+                                          Navigator.pop(ctx);
+                                          if (profile.matchId != null) {
+                                            _deleteMatch(profile.matchId!, 'mutuos');
+                                          }
+                                        },
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: Colors.red,
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(10),
+                                          ),
+                                        ),
+                                        child: const Text(
+                                          'Desfazer',
+                                          style: TextStyle(color: Colors.white),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              }
+                            },
+                            itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+                              PopupMenuItem<String>(
+                                value: 'clear',
+                                child: Row(
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.all(6),
+                                      decoration: BoxDecoration(
+                                        color: Colors.grey.withOpacity(0.1),
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: const Icon(Icons.cleaning_services_rounded, size: 18, color: Colors.grey),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    const Text('Limpar Conversa'),
+                                  ],
+                                ),
+                              ),
+                              PopupMenuItem<String>(
+                                value: 'delete',
+                                child: Row(
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.all(6),
+                                      decoration: BoxDecoration(
+                                        color: Colors.red.withOpacity(0.1),
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: const Icon(Icons.person_remove_rounded, size: 18, color: Colors.red),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    const Text('Desfazer Match', style: TextStyle(color: Colors.red)),
+                                  ],
+                                ),
+                              ),
+                            ],
+                            icon: Icon(
+                              Icons.more_horiz_rounded,
+                              color: Colors.grey[400],
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
                             ),
                           ),
                         ],
-                        icon: const Icon(Icons.more_vert, color: Colors.grey),
                       ),
-                    );
-                  },
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        );
-      },
+        ),
+      ),
     );
   }
 
@@ -2012,14 +2741,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                               fontSize: 18,
                             ),
                           ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Descubra quem curtiu você!',
-                            style: TextStyle(
-                              color: Colors.white.withOpacity(0.9),
-                              fontSize: 13,
-                            ),
-                          ),
                         ],
                       ),
                     ),
@@ -2035,34 +2756,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 ),
               ),
               
-              const SizedBox(height: 30),
-              
-              // Estatísticas
-              Container(
-                margin: const EdgeInsets.symmetric(horizontal: 20),
-                padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 25),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(20),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.05),
-                      blurRadius: 15,
-                      offset: const Offset(0, 5),
-                    ),
-                  ],
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
-                  children: [
-                    _buildProfileStat('Curtidas', '24', Icons.favorite_outline),
-                    Container(width: 1, height: 40, color: Colors.grey[200]),
-                    _buildProfileStat('Matches', '8', Icons.people_outline),
-                    Container(width: 1, height: 40, color: Colors.grey[200]),
-                    _buildProfileStat('Fotos', '${myProfile.imageUrls.length}', Icons.photo_outlined),
-                  ],
-                ),
-              ),
               const SizedBox(height: 30),
 
               // Botão de Sair
@@ -2103,6 +2796,33 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(15),
                       side: BorderSide(color: Colors.redAccent.withOpacity(0.3)),
+                    ),
+                  ),
+                ),
+              ),
+              
+              const SizedBox(height: 20),
+              
+              // Botão de Excluir Conta
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: TextButton.icon(
+                  onPressed: () => _showDeleteAccountDialog(),
+                  icon: Icon(Icons.delete_forever_rounded, color: Colors.red[700]),
+                  label: Text(
+                    'Excluir Minha Conta',
+                    style: TextStyle(
+                      color: Colors.red[700],
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                  style: TextButton.styleFrom(
+                    backgroundColor: Colors.red.withOpacity(0.05),
+                    padding: const EdgeInsets.symmetric(vertical: 15, horizontal: 25),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(15),
+                      side: BorderSide(color: Colors.red.withOpacity(0.3)),
                     ),
                   ),
                 ),
@@ -2493,21 +3213,24 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Widget _buildSettingsTab() {
     return Scaffold(
       backgroundColor: Colors.grey[50],
+      appBar: AppBar(
+        backgroundColor: Colors.grey[50],
+        elevation: 0,
+        centerTitle: false,
+        title: Padding(
+          padding: const EdgeInsets.only(left: 8.0),
+          child: Image.asset(
+            'assets/images/logo_horizontal.png',
+            height: 40,
+            fit: BoxFit.contain,
+          ),
+        ),
+      ),
       body: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Padding(
-              padding: const EdgeInsets.all(20.0),
-              child: Text(
-                'Preferências de Busca',
-                style: TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.grey[800],
-                ),
-              ),
-            ),
+            // Removed the old Padding with 'Preferências de Busca' Text
             Expanded(
               child: ListView(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -2601,7 +3324,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             const Text(
-                              'Distância máxima',
+                              'Raio de busca',
                               style: TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.w600,
@@ -2621,8 +3344,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         Slider(
                           value: _searchRadius,
                           min: 50,
-                          max: 500,
-                          divisions: 45,
+                          max: 1000,
+                          divisions: 95,
                           activeColor: const Color(0xFF667eea),
                           inactiveColor: Colors.grey[300],
                           onChanged: (value) {
@@ -2636,7 +3359,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             Text('50 km', style: TextStyle(color: Colors.grey[600], fontSize: 12)),
-                            Text('500 km', style: TextStyle(color: Colors.grey[600], fontSize: 12)),
+                            Text('1000 km', style: TextStyle(color: Colors.grey[600], fontSize: 12)),
                           ],
                         ),
                       ],
@@ -2792,6 +3515,65 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                               borderRadius: BorderRadius.circular(10),
                             ),
                           ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  
+                  const SizedBox(height: 30),
+                  
+                  // Sound Notifications Toggle
+                  _buildSectionHeader('Notificações'),
+                  const SizedBox(height: 10),
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(15),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.05),
+                          blurRadius: 10,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          _soundEnabled ? Icons.volume_up : Icons.volume_off,
+                          color: const Color(0xFF667eea),
+                          size: 24,
+                        ),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Alerta Sonoro',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              SizedBox(height: 2),
+                              Text(
+                                'Tocar som ao receber likes',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: Colors.grey,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Switch(
+                          value: _soundEnabled,
+                          activeColor: const Color(0xFF667eea),
+                          onChanged: (value) {
+                            setState(() => _soundEnabled = value);
+                          },
                         ),
                       ],
                     ),
@@ -3054,6 +3836,237 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           backgroundColor: Colors.red,
         ),
       );
+    }
+  }
+
+  void _showDeleteAccountDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.red.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.warning_amber_rounded, color: Colors.red, size: 28),
+            ),
+            const SizedBox(width: 12),
+            const Text(
+              'Excluir Conta',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Tem certeza que deseja excluir sua conta?',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.red.withOpacity(0.05),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.red.withOpacity(0.2)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.error_outline, color: Colors.red[700], size: 20),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Esta ação é irreversível!',
+                        style: TextStyle(
+                          color: Colors.red[700],
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    '• Todas as suas fotos serão excluídas\n'
+                    '• Seu perfil será removido permanentemente\n'
+                    '• Todos os matches e conversas serão perdidos\n'
+                    '• Curtidas enviadas e recebidas serão apagadas\n'
+                    '• Não será possível recuperar seus dados',
+                    style: TextStyle(
+                      color: Colors.grey[700],
+                      fontSize: 14,
+                      height: 1.5,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text(
+              'Cancelar',
+              style: TextStyle(color: Colors.grey[600], fontWeight: FontWeight.w600),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _confirmDeleteAccount();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            child: const Text(
+              'Excluir Conta',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _confirmDeleteAccount() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.delete_forever, color: Colors.red, size: 28),
+            SizedBox(width: 12),
+            Text('Confirmação Final'),
+          ],
+        ),
+        content: const Text(
+          'Digite "EXCLUIR" para confirmar a exclusão permanente da sua conta:',
+          style: TextStyle(fontSize: 15),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('Cancelar', style: TextStyle(color: Colors.grey[600])),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await _deleteAccount();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            child: const Text('Confirmar Exclusão', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _deleteAccount() async {
+    // Show loading
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => const Center(
+        child: CircularProgressIndicator(color: Colors.white),
+      ),
+    );
+
+    try {
+      final supabase = Supabase.instance.client;
+      final userId = supabase.auth.currentUser?.id;
+      
+      if (userId == null) {
+        Navigator.pop(context);
+        return;
+      }
+
+      // 1. Delete all messages from user's matches
+      final matchesData = await supabase
+          .from('matches')
+          .select('id')
+          .or('user1_id.eq.$userId,user2_id.eq.$userId');
+      
+      for (var match in matchesData) {
+        await supabase.from('messages').delete().eq('match_id', match['id']);
+      }
+
+      // 2. Delete all matches
+      await supabase.from('matches').delete().or('user1_id.eq.$userId,user2_id.eq.$userId');
+
+      // 3. Delete all likes (sent and received)
+      await supabase.from('likes').delete().eq('liker_id', userId);
+      await supabase.from('likes').delete().eq('liked_id', userId);
+
+      // 4. Delete all super likes (sent and received)
+      await supabase.from('super_likes').delete().eq('liker_id', userId);
+      await supabase.from('super_likes').delete().eq('liked_id', userId);
+
+      // 5. Delete all passes
+      await supabase.from('passes').delete().eq('user_id', userId);
+      await supabase.from('passes').delete().eq('passed_id', userId);
+
+      // 6. Delete profile photos from storage
+      try {
+        final photos = await supabase.storage.from('profile-photos').list(path: userId);
+        if (photos.isNotEmpty) {
+          final filePaths = photos.map((f) => '$userId/${f.name}').toList();
+          await supabase.storage.from('profile-photos').remove(filePaths);
+        }
+      } catch (e) {
+        print('Erro ao excluir fotos (continuando): $e');
+      }
+
+      // 7. Delete profile
+      await supabase.from('profiles').delete().eq('id', userId);
+
+      // 8. Sign out
+      await supabase.auth.signOut();
+
+      Navigator.pop(context); // Close loading
+
+      // Navigate to auth screen
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Sua conta foi excluída com sucesso.'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (context) => const AuthScreen()),
+          (route) => false,
+        );
+      }
+    } catch (e) {
+      Navigator.pop(context); // Close loading
+      print('Erro ao excluir conta: $e');
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro ao excluir conta: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -3735,20 +4748,14 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
                   background: Stack(
                     fit: StackFit.expand,
                     children: [
-                      // Carrossel de Imagens
-                      PageView.builder(
-                        itemCount: widget.profile.imageUrls.length,
-                        onPageChanged: (index) {
-                          setState(() {
-                            _currentImageIndex = index;
-                          });
-                        },
-                        itemBuilder: (context, index) {
-                          return Image.network(
-                            widget.profile.imageUrls[index],
-                            fit: BoxFit.cover,
-                          );
-                        },
+                      // Foto Atual
+                      Image.network(
+                        widget.profile.imageUrls[_currentImageIndex],
+                        fit: BoxFit.cover,
+                        errorBuilder: (ctx, e, st) => Container(
+                          color: Colors.grey[300],
+                          child: const Icon(Icons.person, size: 80, color: Colors.grey),
+                        ),
                       ),
                       
                       // Gradiente de Proteção (Topo e Base)
@@ -3767,30 +4774,87 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
                           ),
                         ),
                       ),
-                      
-                      // Indicadores de Página (Pontinhos)
-                      Positioned(
-                        bottom: 40, // Acima da borda branca arredondada
-                        left: 0,
-                        right: 0,
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: widget.profile.imageUrls.map((url) {
-                            int index = widget.profile.imageUrls.indexOf(url);
-                            return Container(
-                              width: 8,
-                              height: 8,
-                              margin: const EdgeInsets.symmetric(horizontal: 4),
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: _currentImageIndex == index
-                                    ? Colors.white
-                                    : Colors.white.withOpacity(0.4),
-                              ),
-                            );
-                          }).toList(),
+
+                      // Áreas de toque para navegar (esquerda e direita)
+                      if (widget.profile.imageUrls.length > 1) ...[
+                        // Toque na esquerda - foto anterior
+                        Positioned(
+                          left: 0,
+                          top: 0,
+                          bottom: 0,
+                          width: MediaQuery.of(context).size.width * 0.3, // 30% da tela
+                          child: GestureDetector(
+                            onTap: () {
+                              if (_currentImageIndex > 0) {
+                                setState(() => _currentImageIndex--);
+                              }
+                            },
+                            child: Container(color: Colors.transparent),
+                          ),
                         ),
-                      ),
+                        // Toque na direita - próxima foto
+                        Positioned(
+                          right: 0,
+                          top: 0,
+                          bottom: 0,
+                          width: MediaQuery.of(context).size.width * 0.3, // 30% da tela
+                          child: GestureDetector(
+                            onTap: () {
+                              if (_currentImageIndex < widget.profile.imageUrls.length - 1) {
+                                setState(() => _currentImageIndex++);
+                              }
+                            },
+                            child: Container(color: Colors.transparent),
+                          ),
+                        ),
+                      ],
+                      
+                      // Indicadores de Página (Barras no topo)
+                      if (widget.profile.imageUrls.length > 1)
+                        Positioned(
+                          top: MediaQuery.of(context).padding.top + 50,
+                          left: 20,
+                          right: 20,
+                          child: Row(
+                            children: List.generate(
+                              widget.profile.imageUrls.length,
+                              (index) => Expanded(
+                                child: Container(
+                                  margin: const EdgeInsets.symmetric(horizontal: 2),
+                                  height: 3,
+                                  decoration: BoxDecoration(
+                                    color: _currentImageIndex == index
+                                        ? Colors.white
+                                        : Colors.white.withOpacity(0.4),
+                                    borderRadius: BorderRadius.circular(2),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+
+                      // Contador de fotos no canto inferior
+                      if (widget.profile.imageUrls.length > 1)
+                        Positioned(
+                          bottom: 40,
+                          right: 20,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withOpacity(0.6),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              '${_currentImageIndex + 1}/${widget.profile.imageUrls.length}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                 ),

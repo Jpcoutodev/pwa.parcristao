@@ -1,7 +1,9 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:novo_app/main.dart'; // Para HomeScreen
 import 'package:novo_app/onboarding_screen.dart';
+import 'package:novo_app/legal_screens.dart'; // Import das telas legais
 
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key});
@@ -13,6 +15,7 @@ class AuthScreen extends StatefulWidget {
 class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateMixin {
   bool _isLogin = true;
   bool _isLoading = false;
+  bool _acceptedTerms = false; // Estado do checkbox
   
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
@@ -57,6 +60,12 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
     }
 
     if (!_isLogin) {
+      // Validação do Checkbox
+      if (!_acceptedTerms) {
+        _showError('Você precisa concordar com os Termos de Uso e Política de Privacidade para se cadastrar.');
+        return;
+      }
+
       final confirmPassword = _confirmPasswordController.text.trim();
       if (confirmPassword != password) {
          _showError('As senhas não coincidem.');
@@ -183,6 +192,72 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
       }
   }
 
+  Future<void> _resetPassword(String email) async {
+    try {
+      await Supabase.instance.client.auth.resetPasswordForEmail(email);
+      if (mounted) {
+        Navigator.pop(context); // Fecha o dialog
+        _showSuccess('Email de redefinição enviado! Verifique sua caixa de entrada.');
+      }
+    } on AuthException catch (e) {
+      if (mounted) {
+         Navigator.pop(context); // Fecha o dialgo para mostrar o erro ou mantém aberto e mostra erro nele? 
+         // Melhor fechar e mostrar erro geral ou mostrar snackbar no dialog.
+         // Vamos fechar e usar _showError
+         _showError(e.message);
+      }
+    } catch (e) {
+       if (mounted) {
+         Navigator.pop(context);
+         _showError('Erro ao enviar email: $e');
+       }
+    }
+  }
+
+  void _showForgotPasswordDialog() {
+    final emailController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Redefinir Senha'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Digite seu email para receber um link de redefinição de senha.'),
+            const SizedBox(height: 16),
+            TextField(
+              controller: emailController,
+              keyboardType: TextInputType.emailAddress,
+              decoration: const InputDecoration(
+                labelText: 'E-mail',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final email = emailController.text.trim();
+              if (email.isNotEmpty) {
+                _resetPassword(email);
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF667eea),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Enviar Email'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -227,26 +302,25 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      // Logo / Icon
+                      // Logo
                       Container(
-                        width: 100,
-                        height: 100,
+                        width: 120,
+                        height: 120,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: Colors.white.withOpacity(0.2),
-                          border: Border.all(color: Colors.white.withOpacity(0.3), width: 2),
+                          color: Colors.white,
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.black.withOpacity(0.1),
+                              color: Colors.black.withOpacity(0.2),
                               blurRadius: 20,
                               spreadRadius: 5,
                             )
                           ],
                         ),
-                        child: const Icon(
-                          Icons.favorite_rounded,
-                          size: 50,
-                          color: Colors.white,
+                        padding: const EdgeInsets.all(15), 
+                        child: Image.asset(
+                          'assets/images/logo_icon.png',
+                          fit: BoxFit.contain,
                         ),
                       ),
                       const SizedBox(height: 24),
@@ -301,6 +375,23 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                               isPassword: true,
                             ),
                             
+                            // Botão Esqueceu a Senha (Apenas Login)
+                            if (_isLogin)
+                              Align(
+                                alignment: Alignment.centerRight,
+                                child: TextButton(
+                                  onPressed: _showForgotPasswordDialog,
+                                  child: Text(
+                                    'Esqueceu a senha?',
+                                    style: TextStyle(
+                                      color: Colors.grey[600],
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            
                             // Campo Confirmar Senha (Só no cadastro)
                             if (!_isLogin) ...[
                               const SizedBox(height: 20),
@@ -309,6 +400,80 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                                 label: 'Confirmar Senha',
                                 icon: Icons.lock_reset_rounded,
                                 isPassword: true,
+                              ),
+                              
+                              const SizedBox(height: 20),
+                              
+                              // Checkbox de Termos e Privacidade
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  SizedBox(
+                                    height: 24,
+                                    width: 24,
+                                    child: Checkbox(
+                                      value: _acceptedTerms,
+                                      onChanged: (val) {
+                                        setState(() {
+                                          _acceptedTerms = val ?? false;
+                                        });
+                                      },
+                                      activeColor: const Color(0xFF667eea),
+                                      side: const BorderSide(color: Colors.grey, width: 1.5),
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: RichText(
+                                      text: TextSpan(
+                                        style: TextStyle(color: Colors.grey[600], fontSize: 13, height: 1.4),
+                                        children: [
+                                          const TextSpan(text: 'Li e concordo com os '),
+                                          TextSpan(
+                                            text: 'Termos de Uso',
+                                            style: const TextStyle(
+                                              color: Color(0xFF667eea),
+                                              fontWeight: FontWeight.bold,
+                                              decoration: TextDecoration.underline,
+                                            ),
+                                            recognizer: TapGestureRecognizer()
+                                              ..onTap = () {
+                                                Navigator.push(context, MaterialPageRoute(builder: (c) => const TermsOfUseScreen()));
+                                              },
+                                          ),
+                                          const TextSpan(text: ', '),
+                                          TextSpan(
+                                            text: 'Política de Privacidade',
+                                            style: const TextStyle(
+                                              color: Color(0xFF667eea),
+                                              fontWeight: FontWeight.bold,
+                                              decoration: TextDecoration.underline,
+                                            ),
+                                            recognizer: TapGestureRecognizer()
+                                              ..onTap = () {
+                                                Navigator.push(context, MaterialPageRoute(builder: (c) => const PrivacyPolicyScreen()));
+                                              },
+                                          ),
+                                          const TextSpan(text: ' e '),
+                                          TextSpan(
+                                            text: 'Dicas de Segurança',
+                                            style: const TextStyle(
+                                              color: Color(0xFF667eea),
+                                              fontWeight: FontWeight.bold,
+                                              decoration: TextDecoration.underline,
+                                            ),
+                                            recognizer: TapGestureRecognizer()
+                                              ..onTap = () {
+                                                Navigator.push(context, MaterialPageRoute(builder: (c) => const SafetyTipsScreen()));
+                                              },
+                                          ),
+                                          const TextSpan(text: '.'),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ],
                             

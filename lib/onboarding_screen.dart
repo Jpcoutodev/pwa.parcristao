@@ -1044,37 +1044,43 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
   }
 
   Widget _buildLocationStep() {
-    if (_useManualLocation || _latitude != null) {
-      // Show manual input fields if user chose manual or already has GPS
+    if (_latitude != null) {
+      // Show success screen after GPS is obtained
       return SingleChildScrollView(
         child: _buildPremiumCard(
-          icon: Icons.location_on_outlined,
-          title: _latitude != null ? 'Localização Confirmada' : 'Localização Manual',
-          subtitle: _latitude != null ? 'GPS ativado com sucesso!' : 'Digite sua localização',
+          icon: Icons.check_circle_outlined,
+          title: 'Localização Confirmada!',
+          subtitle: 'GPS ativado com sucesso',
           children: [
-            if (_latitude != null) ...[
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.green.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.green.withOpacity(0.3)),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.check_circle, color: Colors.green, size: 24),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        'Sua localização foi detectada automaticamente. Isso nos ajuda a mostrar perfis próximos de você!',
-                        style: TextStyle(color: Colors.green[800], fontSize: 14),
-                      ),
-                    ),
-                  ],
-                ),
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.green.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.green.withOpacity(0.3)),
               ),
-              const SizedBox(height: 24),
-            ],
+              child: Column(
+                children: [
+                  const Icon(Icons.check_circle, color: Colors.green, size: 48),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Sua localização foi detectada!',
+                    style: TextStyle(
+                      color: Colors.green[800],
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Agora você poderá ver pessoas próximas de você.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.green[700], fontSize: 14),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
             
             _buildPremiumInputLabel('Cidade'),
             _buildPremiumTextField(_cityController, 'Ex: São Paulo', Icons.location_city_outlined),
@@ -1130,27 +1136,50 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
     // Initial GPS permission screen
     return SingleChildScrollView(
       child: _buildPremiumCard(
-        icon: Icons.my_location,
-        title: 'Encontre pessoas perto de você',
-        subtitle: 'Como você prefere compartilhar sua localização?',
+        icon: Icons.location_on_rounded,
+        title: 'Ative sua Localização',
+        subtitle: 'Para encontrar pessoas perto de você',
         children: [
-          // Explanation
+          // Main explanation card
           Container(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
               gradient: LinearGradient(
-                colors: [_primaryColor.withOpacity(0.1), _secondaryColor.withOpacity(0.05)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [_primaryColor.withOpacity(0.08), _secondaryColor.withOpacity(0.05)],
               ),
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: _primaryColor.withOpacity(0.2)),
             ),
-            child: Row(
+            child: Column(
               children: [
-                Icon(Icons.info_outline, color: _primaryColor, size: 20),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Usamos sua localização apenas para mostrar perfis próximos.',
-                    style: TextStyle(color: Colors.grey[700], fontSize: 13, height: 1.3),
+                Container(
+                  width: 70,
+                  height: 70,
+                  decoration: BoxDecoration(
+                    color: _primaryColor.withOpacity(0.15),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(Icons.gps_fixed, color: _primaryColor, size: 35),
+                ),
+                const SizedBox(height: 20),
+                Text(
+                  'Por que precisamos do GPS?',
+                  style: TextStyle(
+                    color: _primaryColor,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'O GPS é necessário para localizar pessoas próximas de você e mostrar perfis compatíveis na sua região.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.grey[700],
+                    fontSize: 15,
+                    height: 1.5,
                   ),
                 ),
               ],
@@ -1159,41 +1188,120 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
           
           const SizedBox(height: 20),
           
+          // Privacy assurance
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.green.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.green.withOpacity(0.2)),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.green.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(Icons.lock_outline, color: Colors.green, size: 22),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Sua privacidade é protegida',
+                        style: TextStyle(
+                          color: Colors.green[800],
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Sua localização é usada APENAS para encontrar pessoas próximas.',
+                        style: TextStyle(
+                          color: Colors.green[700],
+                          fontSize: 13,
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          
+          const SizedBox(height: 30),
+          
           // GPS Button
           _isLoadingLocation
-              ? const Center(child: CircularProgressIndicator())
-              : ElevatedButton.icon(
-                  onPressed: _requestLocationPermission,
-                  icon: const Icon(Icons.gps_fixed, size: 22),
-                  label: const Text('Permitir Localização (GPS)'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _primaryColor,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                    minimumSize: const Size(double.infinity, 50),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+              ? Column(
+                  children: [
+                    const CircularProgressIndicator(),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Obtendo sua localização...',
+                      style: TextStyle(color: Colors.grey[600], fontSize: 14),
+                    ),
+                  ],
+                )
+              : Container(
+                  width: double.infinity,
+                  height: 60,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    gradient: LinearGradient(
+                      colors: [_primaryColor, _secondaryColor],
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: _primaryColor.withOpacity(0.4),
+                        blurRadius: 15,
+                        offset: const Offset(0, 6),
+                      ),
+                    ],
+                  ),
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: _requestLocationPermission,
+                      borderRadius: BorderRadius.circular(16),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.gps_fixed, color: Colors.white, size: 24),
+                          SizedBox(width: 12),
+                          Text(
+                            'Ativar GPS',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
           
-          const SizedBox(height: 12),
+          const SizedBox(height: 16),
           
-          // Manual Button
-          OutlinedButton.icon(
-            onPressed: () {
-              setState(() => _useManualLocation = true);
-            },
-            icon: Icon(Icons.edit_location_alt, color: _primaryColor, size: 20),
-            label: Text('Digitar Manualmente', style: TextStyle(color: _primaryColor)),
-            style: OutlinedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-              minimumSize: const Size(double.infinity, 50),
-              side: BorderSide(color: _primaryColor, width: 2),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+          // Hint text
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.info_outline, color: Colors.grey[400], size: 16),
+              const SizedBox(width: 6),
+              Text(
+                'Certifique-se de que o GPS está ligado',
+                style: TextStyle(color: Colors.grey[500], fontSize: 13),
               ),
-            ),
+            ],
           ),
         ],
       ),

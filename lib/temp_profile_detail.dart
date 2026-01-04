@@ -2,19 +2,42 @@ import 'package:flutter/material.dart';
 import 'package:novo_app/main.dart'; // To access Profile class
 import 'package:novo_app/chat_screen.dart'; // Import Chat Screen
 
-class ProfileDetailScreen extends StatelessWidget {
+class ProfileDetailScreen extends StatefulWidget {
   final Profile profile;
 
   const ProfileDetailScreen({super.key, required this.profile});
 
   @override
+  State<ProfileDetailScreen> createState() => _ProfileDetailScreenState();
+}
+
+class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
+  int _currentPhotoIndex = 0;
+  late PageController _photoController;
+
+  @override
+  void initState() {
+    super.initState();
+    _photoController = PageController();
+  }
+
+  @override
+  void dispose() {
+    _photoController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final profile = widget.profile;
+    final bottomPadding = MediaQuery.of(context).padding.bottom;
+    
     return Scaffold(
       body: Stack(
         children: [
           CustomScrollView(
             slivers: [
-              // Foto de Capa Expansível
+              // Foto de Capa Expansível com Carrossel
               SliverAppBar(
                 expandedHeight: MediaQuery.of(context).size.height * 0.55,
                 pinned: true,
@@ -56,11 +79,16 @@ class ProfileDetailScreen extends StatelessWidget {
                   background: Stack(
                     fit: StackFit.expand,
                     children: [
+                      // Foto atual
                       Image.network(
-                        profile.imageUrls.first,
+                        profile.imageUrls[_currentPhotoIndex],
                         fit: BoxFit.cover,
+                        errorBuilder: (ctx, e, st) => Container(
+                          color: Colors.grey[300],
+                          child: const Icon(Icons.person, size: 80, color: Colors.grey),
+                        ),
                       ),
-                      // Gradiente para o texto sobreposto na appbar não ficar ruim e dar chance de ler
+                      // Gradiente para o texto sobreposto
                       Container(
                         decoration: BoxDecoration(
                           gradient: LinearGradient(
@@ -76,6 +104,88 @@ class ProfileDetailScreen extends StatelessWidget {
                           ),
                         ),
                       ),
+                      // Áreas de toque para navegar (esquerda e direita)
+                      if (profile.imageUrls.length > 1) ...[
+                        // Toque na esquerda - foto anterior
+                        Positioned(
+                          left: 0,
+                          top: 0,
+                          bottom: 0,
+                          width: MediaQuery.of(context).size.width * 0.3,
+                          child: GestureDetector(
+                            onTap: () {
+                              if (_currentPhotoIndex > 0) {
+                                setState(() => _currentPhotoIndex--);
+                              }
+                            },
+                            child: Container(
+                              color: Colors.transparent,
+                            ),
+                          ),
+                        ),
+                        // Toque na direita - próxima foto
+                        Positioned(
+                          right: 0,
+                          top: 0,
+                          bottom: 0,
+                          width: MediaQuery.of(context).size.width * 0.3,
+                          child: GestureDetector(
+                            onTap: () {
+                              if (_currentPhotoIndex < profile.imageUrls.length - 1) {
+                                setState(() => _currentPhotoIndex++);
+                              }
+                            },
+                            child: Container(
+                              color: Colors.transparent,
+                            ),
+                          ),
+                        ),
+                      ],
+                      // Indicadores de Foto (barras no topo)
+                      if (profile.imageUrls.length > 1)
+                        Positioned(
+                          top: MediaQuery.of(context).padding.top + 50,
+                          left: 20,
+                          right: 20,
+                          child: Row(
+                            children: List.generate(
+                              profile.imageUrls.length,
+                              (index) => Expanded(
+                                child: Container(
+                                  margin: const EdgeInsets.symmetric(horizontal: 2),
+                                  height: 3,
+                                  decoration: BoxDecoration(
+                                    color: index == _currentPhotoIndex 
+                                        ? Colors.white 
+                                        : Colors.white.withOpacity(0.4),
+                                    borderRadius: BorderRadius.circular(2),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      // Contador de fotos
+                      if (profile.imageUrls.length > 1)
+                        Positioned(
+                          bottom: 30,
+                          right: 20,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withOpacity(0.6),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              '${_currentPhotoIndex + 1}/${profile.imageUrls.length}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                 ),
@@ -178,7 +288,8 @@ class ProfileDetailScreen extends StatelessWidget {
                         }).toList(),
                       ),
                       
-                      const SizedBox(height: 100), // Espaço para os botões flutuantes
+                      // Espaço extra para os botões flutuantes + safe area
+                      SizedBox(height: 120 + bottomPadding),
                     ],
                   ),
                 ),
@@ -186,30 +297,49 @@ class ProfileDetailScreen extends StatelessWidget {
             ],
           ),
 
-          // Botões de Ação Flutuantes
+          // Botões de Ação Flutuantes (com SafeArea)
           Positioned(
-            bottom: 30,
-            left: 20,
-            right: 20,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                 _buildActionButton(Icons.close, Colors.white, Colors.redAccent, 60, () => Navigator.pop(context, 'dislike')),
-                 _buildActionButton(Icons.star, Colors.white, Colors.blueAccent, 50, () => Navigator.pop(context, 'super')),
-                 _buildActionButton(Icons.favorite, Colors.white, const Color(0xFF00E676), 60, () => Navigator.pop(context, 'like')),
-                 if (profile.matchId != null)
-                   _buildActionButton(Icons.chat, Colors.white, const Color(0xFF667eea), 60, () {
-                     Navigator.push(
-                       context,
-                       MaterialPageRoute(
-                         builder: (context) => ChatScreen(
-                           matchId: profile.matchId!,
-                           targetProfile: profile,
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: Container(
+              padding: EdgeInsets.only(
+                top: 20,
+                bottom: 20 + bottomPadding,
+                left: 20,
+                right: 20,
+              ),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.white.withOpacity(0.0),
+                    Colors.white.withOpacity(0.9),
+                    Colors.white,
+                  ],
+                ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                   _buildActionButton(Icons.close, Colors.white, Colors.redAccent, 60, () => Navigator.pop(context, 'dislike')),
+                   _buildActionButton(Icons.star, Colors.white, Colors.blueAccent, 50, () => Navigator.pop(context, 'super')),
+                   _buildActionButton(Icons.favorite, Colors.white, const Color(0xFF00E676), 60, () => Navigator.pop(context, 'like')),
+                   if (profile.matchId != null)
+                     _buildActionButton(Icons.chat, Colors.white, const Color(0xFF667eea), 60, () {
+                       Navigator.push(
+                         context,
+                         MaterialPageRoute(
+                           builder: (context) => ChatScreen(
+                             matchId: profile.matchId!,
+                             targetProfile: profile,
+                           ),
                          ),
-                       ),
-                     );
-                   }),
-              ],
+                       );
+                     }),
+                ],
+              ),
             ),
           ),
         ],
@@ -228,9 +358,14 @@ class ProfileDetailScreen extends StatelessWidget {
           shape: BoxShape.circle,
           boxShadow: [
             BoxShadow(
+              color: echoColor.withOpacity(0.3),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+            BoxShadow(
               color: Colors.black.withOpacity(0.1),
-              blurRadius: 10,
-              offset: const Offset(0, 5),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
             ),
           ],
         ),
