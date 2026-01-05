@@ -1186,101 +1186,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      // Usamos IndexedStack para manter o estado das abas
-      body: IndexedStack(
-        index: _selectedIndex,
-        children: [
-          _buildSwipeTab(),     // 0: Cards
-          _buildMatchesTab(),   // 1: Curtidas Mútuas
-          _buildMessagesTab(),  // 2: Mensagens
-          _buildProfileTab(),   // 3: Perfil
-          _buildSettingsTab(),  // 4: Configurações (NOVO)
-        ],
-      ),
-      bottomNavigationBar: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.05), // Sombra bem suave
-              blurRadius: 20,
-              offset: const Offset(0, -5),
-            ),
-          ],
-        ),
-        child: BottomNavigationBar(
-          currentIndex: _selectedIndex,
-          onTap: _onItemTapped,
-          type: BottomNavigationBarType.fixed,
-          backgroundColor: Colors.transparent, // Transparente pois o Container já tem cor
-          selectedItemColor: const Color(0xFF667eea), // Azul/Roxo vibrante
-          unselectedItemColor: Colors.grey[400], // Cinza claro para os inativos
-          showUnselectedLabels: false, // Minimalista: esconde texto dos não selecionados
-          showSelectedLabels: true,
-          selectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
-          elevation: 0,
-          items: [
-            BottomNavigationBarItem(
-              icon: Icon(_selectedIndex == 0 ? Icons.style : Icons.style_outlined),
-              label: 'Início',
-            ),
-            BottomNavigationBarItem(
-              icon: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  Icon(_selectedIndex == 1 ? Icons.favorite : Icons.favorite_border),
-                  if (_notificationCount > 0)
-                    Positioned(
-                      right: -2,
-                      top: -2,
-                      child: Container(
-                        padding: const EdgeInsets.all(3),
-                        decoration: BoxDecoration(
-                          color: Colors.red,
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white, width: 1.5), // Borda branca para destacar
-                        ),
-                        constraints: const BoxConstraints(
-                          minWidth: 16,
-                          minHeight: 16,
-                        ),
-                        child: Text(
-                          _notificationCount > 99 ? '99+' : '$_notificationCount',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-              label: 'Interesse',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(_selectedIndex == 2 ? Icons.chat_bubble : Icons.chat_bubble_outline),
-              label: 'Chat',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(_selectedIndex == 3 ? Icons.person : Icons.person_outline),
-              label: 'Perfil',
-            ),
-            // Nova aba Configurações
-            BottomNavigationBarItem(
-              // Usando tune_rounded para um visual mais 'ajuste'
-              icon: Icon(_selectedIndex == 4 ? Icons.tune_rounded : Icons.tune_outlined),
-              label: 'Config',
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSwipeTab() {
+    // Envolvemos o Scaffold em um Container com gradiente para garantir fundo contínuo
+    // sem usar extendBody, que estava causando problemas de layout.
     return Container(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
@@ -1292,6 +1199,126 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           ],
         ),
       ),
+      child: Scaffold(
+        backgroundColor: Colors.transparent, // Fundo transparente para ver o gradiente
+        // Usamos IndexedStack para manter o estado das abas
+        body: IndexedStack(
+          index: _selectedIndex,
+          children: [
+            _buildSwipeTab(),     // 0: Cards
+            _buildMatchesTab(),   // 1: Curtidas Mútuas
+            _buildMessagesTab(),  // 2: Mensagens
+            _buildProfileTab(),   // 3: Perfil
+            _buildSettingsTab(),  // 4: Configurações (NOVO)
+          ],
+        ),
+        bottomNavigationBar: Container(
+          // Removemos a cor e sombra do container para ser totalmente transparente
+          color: Colors.transparent,
+          child: BottomNavigationBar(
+            currentIndex: _selectedIndex,
+            onTap: _onItemTapped,
+            type: BottomNavigationBarType.fixed,
+            backgroundColor: Colors.transparent, 
+            selectedItemColor: Colors.white, // Ícones ativos brancos
+            unselectedItemColor: Colors.white, // Ícones inativos também brancos
+            showUnselectedLabels: false,
+            showSelectedLabels: true,
+            selectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12, color: Colors.white),
+            unselectedLabelStyle: const TextStyle(color: Colors.white),
+            elevation: 0,
+            iconSize: 32, // Ícones maiores
+            items: [
+              BottomNavigationBarItem(
+                icon: _buildNavIcon(Icons.style, 0),
+                label: 'Início',
+              ),
+              BottomNavigationBarItem(
+                icon: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    _buildNavIcon(Icons.favorite, 1),
+                    if (_notificationCount > 0)
+                      Positioned(
+                        right: -2,
+                        top: -2,
+                        child: Container(
+                          padding: const EdgeInsets.all(3),
+                          decoration: BoxDecoration(
+                            color: Colors.red,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 1.5),
+                          ),
+                          constraints: const BoxConstraints(
+                            minWidth: 16,
+                            minHeight: 16,
+                          ),
+                          child: Text(
+                            _notificationCount > 99 ? '99+' : '$_notificationCount',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                label: 'Interesse',
+              ),
+              BottomNavigationBarItem(
+                icon: _buildNavIcon(Icons.chat_bubble, 2),
+                label: 'Chat',
+              ),
+              BottomNavigationBarItem(
+                icon: _buildNavIcon(Icons.person, 3),
+                label: 'Perfil',
+              ),
+              // Nova aba Configurações
+              BottomNavigationBarItem(
+                icon: _buildNavIcon(Icons.tune_rounded, 4),
+                label: 'Config',
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNavIcon(IconData iconData, int index) {
+    bool isSelected = _selectedIndex == index;
+    return Container(
+      decoration: BoxDecoration(
+        // Glow sutil para destacar
+        shape: BoxShape.circle,
+        boxShadow: isSelected ? [
+          BoxShadow(
+            color: Colors.white.withOpacity(0.4),
+            blurRadius: 15,
+            spreadRadius: 2,
+          )
+        ] : [],
+      ),
+      child: Icon(
+        iconData,
+        // Se não selecionado usa o contorno, se selecionado usa preenchido (se disponível, mas aqui usaremos o mesmo ícone com transparência controlada pelo BottomNav)
+        // Para simplificar e garantir destaque, usamos o mesmo ícone
+        shadows: const [
+          Shadow(color: Colors.black45, blurRadius: 5, offset: Offset(0, 2))
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSwipeTab() {
+    return Container(
+      // Removemos o gradiente daqui pois agora ele está no Scaffold global
+      color: Colors.transparent,
+      // Adicionamos padding inferior para que o card não invada a área da barra de navegação
+      padding: const EdgeInsets.only(bottom: 3), // Padding reduzido para 3
       child: Stack(
         children: [
           _isLoading 
@@ -4112,7 +4139,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       // 7. Delete profile
       await supabase.from('profiles').delete().eq('id', userId);
 
-      // 8. Sign out
+      // 8. Delete auth user (via RPC function with admin privileges)
+      await supabase.rpc('delete_user');
+
+      // 9. Sign out (já é redundante após delete, mas garante limpeza local)
       await supabase.auth.signOut();
 
       Navigator.pop(context); // Close loading
