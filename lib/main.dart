@@ -6,6 +6,7 @@ import 'package:novo_app/auth_screen.dart';
 import 'package:novo_app/edit_profile_screen.dart'; // Import da tela de edição
 import 'package:novo_app/temp_profile_detail.dart'; // Import Profile Detail
 import 'package:novo_app/chat_screen.dart'; // Import Chat Screen
+import 'package:novo_app/verification_screen.dart'; // Import Verification Screen
 import 'package:geolocator/geolocator.dart';
 import 'package:audioplayers/audioplayers.dart'; // For notification sounds
 
@@ -71,6 +72,9 @@ class Profile {
   final String? lastMessage;
   final DateTime? lastMessageTime;
   final bool isSuperLike; // Novo campo para identificar Super Like
+  final bool isVerified; // Novo: Indica se o perfil é verificado
+  final String? verificationStatus; // Novo: status da solicitação (pending, rejected, etc)
+  final String? verificationRejectionReason; // Novo: motivo da rejeição
 
   Profile({
     required this.id,
@@ -92,6 +96,9 @@ class Profile {
     this.lastMessage,
     this.lastMessageTime,
     this.isSuperLike = false,
+    this.isVerified = false,
+    this.verificationStatus,
+    this.verificationRejectionReason,
   });
 }
 
@@ -212,6 +219,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   final AudioPlayer _notificationPlayer = AudioPlayer();
   bool _soundEnabled = true; // Sound notifications enabled by default
   
+
+
   @override
   void initState() {
     super.initState();
@@ -1986,6 +1995,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       lastMessage: lastMessage,
       lastMessageTime: lastMessageTime,
       isSuperLike: isSuperLike,
+      isVerified: data['is_verified'] ?? false,
     );
   }
 
@@ -2633,6 +2643,27 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       }
       print('DEBUG: Lista de imagens processada: $images'); // DEBUG
       
+      String? vStatus = 'none';
+      String? vReason;
+
+      // Buscar status da verificação
+      try {
+        final verificationData = await supabase
+            .from('verification_requests')
+            .select('status, rejection_reason')
+            .eq('user_id', userId)
+            .order('created_at', ascending: false)
+            .limit(1)
+            .maybeSingle();
+
+        if (verificationData != null) {
+          vStatus = verificationData['status'];
+          vReason = verificationData['rejection_reason'];
+        }
+      } catch (e) {
+        print('Erro ao buscar status verificação: $e');
+      }
+      
       return Profile(
         id: data['id'],
         name: data['name'] ?? '',
@@ -2645,6 +2676,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         faith: data['faith'],
         city: data['city'] ?? '',
         interests: List<String>.from(data['interests'] ?? []),
+        isVerified: data['is_verified'] ?? false,
+        verificationStatus: vStatus,
+        verificationRejectionReason: vReason,
       );
     } catch (e) {
       print('Erro ao carregar perfil: $e');
@@ -2836,8 +2870,118 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                             setState(() => _selectedIndex = 4);
                           },
                         ),
+
                       ],
                     ),
+                    
+                    const SizedBox(height: 25),
+
+                    // Área de Verificação
+                    if (myProfile.isVerified)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: Colors.lightBlueAccent.withOpacity(0.5)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: const [
+                            Icon(Icons.verified, color: Colors.lightBlueAccent, size: 20),
+                            SizedBox(width: 8),
+                            Text(
+                              'Perfil Verificado',
+                              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                            ),
+                          ],
+                        ),
+                      )
+                    else if (myProfile.verificationStatus == 'pending')
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.amber.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: Colors.amber.withOpacity(0.5)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: const [
+                            Icon(Icons.access_time_filled, color: Colors.amber, size: 20),
+                            SizedBox(width: 8),
+                            Text(
+                              'Verificação em análise',
+                              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                            ),
+                          ],
+                        ),
+                      )
+                    else if (myProfile.verificationStatus == 'rejected')
+                      GestureDetector(
+                        onTap: () async {
+                           final result = await Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (context) => const VerificationScreen()),
+                          );
+                          if (result == true) {
+                            setState(() => _getMyProfile()); // Recarregar
+                          }
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: Colors.red.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: Colors.redAccent.withOpacity(0.5)),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.error, color: Colors.redAccent, size: 20),
+                              const SizedBox(width: 8),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    'Verificação rejeitada. Tentar novamente?',
+                                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                                  ),
+                                  if (myProfile.verificationRejectionReason != null)
+                                    Text(
+                                      myProfile.verificationRejectionReason!,
+                                      style: TextStyle(color: Colors.white.withOpacity(0.8), fontSize: 10),
+                                    ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      )
+                    else
+                      TextButton.icon(
+                        onPressed: () async {
+                          final result = await Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (context) => const VerificationScreen()),
+                          );
+                          if (result == true) {
+                            // Se enviou com sucesso, recarrega o perfil para atualizar o status
+                            setState(() {}); // Força rebuild para chamar future builder se necessário, ou melhor:
+                            _getMyProfile(); // Recarrega dados
+                          }
+                        },
+                        icon: const Icon(Icons.verified_user_outlined, color: Colors.white),
+                        label: const Text(
+                          'Verificar Perfil',
+                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                        ),
+                        style: TextButton.styleFrom(
+                          backgroundColor: Colors.white.withOpacity(0.15),
+                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                        ),
+                      ),
                     
                     const SizedBox(height: 30),
                   ],
@@ -3243,7 +3387,22 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   fit: StackFit.expand,
                   children: [
                     // O Card Principal
-                    ProfileCard(profile: profiles.last, isTop: true),
+                    ProfileCard(
+                      profile: profiles.last, 
+                      isTop: true,
+                      onLike: (profile) {
+                        _processLike(profile);
+                        _animateAndRemove(SwipeStatus.like);
+                      },
+                      onDislike: (profile) {
+                        _onDislikeFromProfile(profile);
+                        _animateAndRemove(SwipeStatus.dislike);
+                      },
+                      onSuperLike: (profile) {
+                        _onSuperLikeFromProfile(profile);
+                        _animateAndRemove(SwipeStatus.superLike);
+                      },
+                    ),
                     
                     // Overlay de LIKE
                     if (_position.dx > 50)
@@ -4326,8 +4485,18 @@ enum SwipeStatus { none, like, dislike, superLike }
 class ProfileCard extends StatefulWidget {
   final Profile profile;
   final bool isTop;
+  final Function(Profile)? onLike;
+  final Function(Profile)? onDislike;
+  final Function(Profile)? onSuperLike;
 
-  const ProfileCard({super.key, required this.profile, required this.isTop});
+  const ProfileCard({
+    super.key, 
+    required this.profile, 
+    required this.isTop,
+    this.onLike,
+    this.onDislike,
+    this.onSuperLike,
+  });
 
   @override
   State<ProfileCard> createState() => _ProfileCardState();
@@ -4591,13 +4760,15 @@ class _ProfileCardState extends State<ProfileCard> {
                                   overflow: TextOverflow.ellipsis,
                                 ),
                               ),
-                              const SizedBox(width: 6),
-                              const Icon(
-                                Icons.verified,
-                                color: Colors.blue,
-                                size: 20,
-                                shadows: [Shadow(blurRadius: 2, color: Colors.black45)],
-                              ),
+                              if (widget.profile.isVerified) ...[
+                                const SizedBox(width: 6),
+                                const Icon(
+                                  Icons.verified,
+                                  color: Colors.lightBlueAccent,
+                                  size: 20,
+                                  shadows: [Shadow(blurRadius: 2, color: Colors.black45)],
+                                ),
+                              ],
                             ],
                           ),
                         ),
@@ -4613,6 +4784,14 @@ class _ProfileCardState extends State<ProfileCard> {
                             
                             if (result != null) {
                               print('Ação retornada do detalhe: $result');
+                              // Processar a ação retornada
+                              if (result == 'like' && widget.onLike != null) {
+                                widget.onLike!(widget.profile);
+                              } else if (result == 'dislike' && widget.onDislike != null) {
+                                widget.onDislike!(widget.profile);
+                              } else if (result == 'super' && widget.onSuperLike != null) {
+                                widget.onSuperLike!(widget.profile);
+                              }
                             }
                           },
                           child: Container(
@@ -4961,18 +5140,27 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
                   onPressed: () => Navigator.pop(context),
                 ),
                 flexibleSpace: FlexibleSpaceBar(
-                  background: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      // Foto Atual
-                      Image.network(
-                        widget.profile.imageUrls[_currentImageIndex],
-                        fit: BoxFit.cover,
-                        errorBuilder: (ctx, e, st) => Container(
-                          color: Colors.grey[300],
-                          child: const Icon(Icons.person, size: 80, color: Colors.grey),
+                  background: Container(
+                    // Adiciona margem superior para respeitar a safe area
+                    margin: EdgeInsets.only(top: MediaQuery.of(context).padding.top),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        // Foto Atual
+                        ClipRRect(
+                          borderRadius: const BorderRadius.only(
+                            topLeft: Radius.circular(20),
+                            topRight: Radius.circular(20),
+                          ),
+                          child: Image.network(
+                            widget.profile.imageUrls[_currentImageIndex],
+                            fit: BoxFit.cover,
+                            errorBuilder: (ctx, e, st) => Container(
+                              color: Colors.grey[300],
+                              child: const Icon(Icons.person, size: 80, color: Colors.grey),
+                            ),
+                          ),
                         ),
-                      ),
                       
                       // Gradiente de Proteção (Topo e Base)
                       Container(
@@ -5072,6 +5260,7 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
                           ),
                         ),
                     ],
+                  ),
                   ),
                 ),
               ),
@@ -5216,6 +5405,30 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
                         ),
                       ),
                       
+                      // Botão de Denúncia
+                      const SizedBox(height: 30),
+                      Center(
+                        child: TextButton.icon(
+                          onPressed: () => _showReportDialog(context),
+                          icon: const Icon(Icons.flag_outlined, color: Colors.red, size: 18),
+                          label: const Text(
+                            'Denunciar Perfil',
+                            style: TextStyle(
+                              color: Colors.red,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                            backgroundColor: Colors.red.withOpacity(0.1),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                          ),
+                        ),
+                      ),
+                      
                       const SizedBox(height: 100),
                     ],
                   ),
@@ -5243,7 +5456,148 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
     );
   }
 
+  // Tipos de denúncia disponíveis
+  static const Map<String, String> _reportTypes = {
+    'harassment': 'Assédio',
+    'fake_profile': 'Perfil falso',
+    'inappropriate_content': 'Conteúdo impróprio',
+    'spam': 'Spam / Propaganda',
+    'underage': 'Menor de idade',
+    'offensive_behavior': 'Comportamento ofensivo',
+    'other': 'Outros',
+  };
 
+  void _showReportDialog(BuildContext context) {
+    String? selectedType;
+    final descriptionController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Row(
+            children: [
+              Icon(Icons.flag, color: Colors.red[400], size: 28),
+              const SizedBox(width: 10),
+              const Text(
+                'Denunciar Perfil',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+              ),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Por que você está denunciando ${widget.profile.name}?',
+                  style: TextStyle(color: Colors.grey[600], fontSize: 14),
+                ),
+                const SizedBox(height: 16),
+                ..._reportTypes.entries.map((entry) => RadioListTile<String>(
+                  title: Text(entry.value, style: const TextStyle(fontSize: 14)),
+                  value: entry.key,
+                  groupValue: selectedType,
+                  activeColor: const Color(0xFF667eea),
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  onChanged: (val) => setDialogState(() => selectedType = val),
+                )),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: descriptionController,
+                  maxLines: 3,
+                  decoration: InputDecoration(
+                    hintText: 'Adicione mais detalhes (opcional)',
+                    hintStyle: TextStyle(color: Colors.grey[400], fontSize: 14),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: Colors.grey[300]!),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(color: Colors.grey[300]!),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(color: Color(0xFF667eea)),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text('Cancelar', style: TextStyle(color: Colors.grey[600])),
+            ),
+            ElevatedButton(
+              onPressed: selectedType == null
+                  ? null
+                  : () => _submitReport(ctx, selectedType!, descriptionController.text),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              ),
+              child: const Text('Enviar Denúncia'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _submitReport(BuildContext dialogContext, String reportType, String description) async {
+    try {
+      final supabase = Supabase.instance.client;
+      final userId = supabase.auth.currentUser?.id;
+
+      if (userId == null) return;
+
+      await supabase.from('reports').insert({
+        'reporter_id': userId,
+        'reported_id': widget.profile.id,
+        'report_type': reportType,
+        'description': description.isNotEmpty ? description : null,
+      });
+
+      Navigator.pop(dialogContext); // Fechar dialog
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle, color: Colors.white),
+                const SizedBox(width: 10),
+                const Text('Denúncia enviada com sucesso!'),
+              ],
+            ),
+            backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+        );
+      }
+    } catch (e) {
+      print('❌ Erro ao enviar denúncia: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Erro ao enviar denúncia. Tente novamente.'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+        );
+      }
+    }
+  }
 
   Widget _buildActionButton(IconData icon, Color iconColor, Color echoColor, double size, VoidCallback onTap) {
     return GestureDetector(
