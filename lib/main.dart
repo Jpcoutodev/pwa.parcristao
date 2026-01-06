@@ -206,6 +206,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   RealtimeChannel? _matchesChannel;
   RealtimeChannel? _likesChannel;
   RealtimeChannel? _superLikesChannel;
+  RealtimeChannel? _messagesChannel; // Subscription para mensagens
   
   // Audio player for notification sounds
   final AudioPlayer _notificationPlayer = AudioPlayer();
@@ -379,6 +380,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     
     // Subscribe to super likes
     _subscribeToSuperLikes();
+    
+    // Subscribe to messages
+    _subscribeToMessages();
   }
 
   /// Subscribe to real-time likes
@@ -555,23 +559,66 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     print('✅ Real-time super likes subscription active');
   }
 
+  /// Subscribe to real-time messages to update unread counter
+  void _subscribeToMessages() {
+    final supabase = Supabase.instance.client;
+    final userId = supabase.auth.currentUser?.id;
+    if (userId == null) return;
+
+    print('💬 Subscribing to real-time messages for user: $userId');
+
+    _messagesChannel = supabase
+        .channel('messages_realtime_home')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'messages',
+          callback: (payload) async {
+            print('💬 REAL-TIME: New message received!');
+            final messageData = payload.newRecord;
+            final senderId = messageData['sender_id'];
+            
+            // Only increment counter if message is from someone else
+            if (senderId != userId && mounted) {
+              setState(() {
+                _messagesNotificationCount++;
+              });
+              
+              // Play notification sound (if enabled)
+              if (_soundEnabled) {
+                try {
+                  await _notificationPlayer.play(UrlSource('https://assets.mixkit.co/active_storage/sfx/2354/2354-preview.mp3'));
+                } catch (e) {
+                  print('⚠️ Could not play message notification sound: $e');
+                }
+              }
+            }
+          },
+        )
+        .subscribe();
+
+    print('✅ Real-time messages subscription active');
+  }
+
   Future<void> _fetchNotificationCount() async {
     try {
       final supabase = Supabase.instance.client;
       final userId = supabase.auth.currentUser?.id;
       if (userId == null) return;
 
-      // Count received likes
+      // Count received likes that haven't been seen yet
       final likesCount = await supabase
           .from('likes')
           .count(CountOption.exact)
-          .eq('liked_id', userId);
+          .eq('liked_id', userId)
+          .eq('seen', false);
       
-      // Count received super likes
+      // Count received super likes that haven't been seen yet
       final superLikesCount = await supabase
           .from('super_likes')
           .count(CountOption.exact)
-          .eq('liked_id', userId);
+          .eq('liked_id', userId)
+          .eq('seen', false);
 
       // Count unread messages
       final unreadMessagesCount = await supabase
@@ -747,6 +794,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _matchesChannel?.unsubscribe();
     _likesChannel?.unsubscribe();
     _superLikesChannel?.unsubscribe();
+    _messagesChannel?.unsubscribe();
     super.dispose();
   }
 
@@ -756,16 +804,50 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       _fetchProfiles(); // Refresh to apply new filter settings
     }
 
-    // Se clicar na aba de Interesse (index 1), limpa a notificação
+    // Se clicar na aba de Interesse (index 1), marca likes como vistos no banco
     if (index == 1) {
+      _markInterestsAsSeen();
       setState(() {
         _notificationCount = 0;
       });
     }
     
+    // Se clicar na aba de Chat (index 2), atualiza o contador de mensagens
+    if (index == 2) {
+      // Atualiza a lista de conversas e zera o contador quando visualizar
+      _refreshInterestTab('mutuos');
+    }
+    
     setState(() {
       _selectedIndex = index;
     });
+  }
+  
+  /// Marca todos os likes e super_likes recebidos como vistos no banco de dados
+  Future<void> _markInterestsAsSeen() async {
+    try {
+      final supabase = Supabase.instance.client;
+      final userId = supabase.auth.currentUser?.id;
+      if (userId == null) return;
+
+      // Marcar likes como vistos
+      await supabase
+          .from('likes')
+          .update({'seen': true})
+          .eq('liked_id', userId)
+          .eq('seen', false);
+      
+      // Marcar super_likes como vistos
+      await supabase
+          .from('super_likes')
+          .update({'seen': true})
+          .eq('liked_id', userId)
+          .eq('seen', false);
+      
+      print('✅ Likes/Super Likes marcados como vistos');
+    } catch (e) {
+      print('❌ Erro ao marcar interesses como vistos: $e');
+    }
   }
 
   void _onPanStart(DragStartDetails details) {
@@ -1269,7 +1351,38 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 label: 'Interesse',
               ),
               BottomNavigationBarItem(
-                icon: _buildNavIcon(Icons.chat_bubble, 2),
+                icon: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    _buildNavIcon(Icons.chat_bubble, 2),
+                    if (_messagesNotificationCount > 0)
+                      Positioned(
+                        right: -2,
+                        top: -2,
+                        child: Container(
+                          padding: const EdgeInsets.all(3),
+                          decoration: BoxDecoration(
+                            color: Colors.red,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 1.5),
+                          ),
+                          constraints: const BoxConstraints(
+                            minWidth: 16,
+                            minHeight: 16,
+                          ),
+                          child: Text(
+                            _messagesNotificationCount > 99 ? '99+' : '$_messagesNotificationCount',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
                 label: 'Chat',
               ),
               BottomNavigationBarItem(
@@ -2213,6 +2326,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 ),
               );
               _refreshInterestTab('mutuos');
+              _fetchNotificationCount(); // Atualiza o contador de mensagens não lidas
             }
           },
           borderRadius: BorderRadius.circular(20),
@@ -4222,6 +4336,23 @@ class ProfileCard extends StatefulWidget {
 class _ProfileCardState extends State<ProfileCard> {
   int _currentImageIndex = 0;
 
+  @override
+  void didUpdateWidget(ProfileCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Resetar o índice da foto quando o perfil mudar
+    if (oldWidget.profile.id != widget.profile.id) {
+      setState(() {
+        _currentImageIndex = 0;
+      });
+    }
+    // Também garantir que o índice não exceda o número de fotos do novo perfil
+    if (_currentImageIndex >= widget.profile.imageUrls.length) {
+      setState(() {
+        _currentImageIndex = 0;
+      });
+    }
+  }
+
   void _nextImage() {
     if (_currentImageIndex < widget.profile.imageUrls.length - 1) {
       setState(() {
@@ -4503,28 +4634,14 @@ class _ProfileCardState extends State<ProfileCard> {
                     
                     const SizedBox(height: 4),
                     
-                    // Cidade e Denominação na mesma linha
+                    // Cidade
                     Row(
                       children: [
                         const Icon(Icons.location_on, color: Colors.white70, size: 14),
                         const SizedBox(width: 4),
-                        Text(
-                          widget.profile.city,
-                          style: const TextStyle(color: Colors.white70, fontSize: 14),
-                        ),
-                        const SizedBox(width: 12),
-                        Container(
-                          width: 4,
-                          height: 4,
-                          decoration: BoxDecoration(
-                            color: Colors.white54,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
                         Flexible(
                           child: Text(
-                            widget.profile.faith ?? 'Cristão', // Mostra denominação (Católica, Evangélica etc)
+                            widget.profile.city,
                             style: const TextStyle(color: Colors.white70, fontSize: 14),
                             overflow: TextOverflow.ellipsis,
                           ),

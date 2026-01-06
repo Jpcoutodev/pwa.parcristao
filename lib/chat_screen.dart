@@ -48,10 +48,16 @@ class _ChatScreenState extends State<ChatScreen> {
           print('📨 New message received via Realtime!');
           final newMsg = payload.newRecord;
           if (mounted && newMsg != null) {
-            setState(() {
-              _messages.add(newMsg);
-            });
-            _scrollToBottom();
+            // Verificar se a mensagem já existe para evitar duplicatas
+            final messageId = newMsg['id'];
+            final alreadyExists = _messages.any((msg) => msg['id'] == messageId);
+            
+            if (!alreadyExists) {
+              setState(() {
+                _messages.add(newMsg);
+              });
+              _scrollToBottom();
+            }
             
             // Mark as read if sender is not me
             if (newMsg['sender_id'] != _currentUserId) {
@@ -121,8 +127,7 @@ class _ChatScreenState extends State<ChatScreen> {
         'sender_id': _currentUserId,
         'content': text,
       });
-
-      await _fetchMessages();
+      // Não precisa chamar _fetchMessages() - o Realtime subscription já adiciona a mensagem
     } catch (e) {
       print('Erro ao enviar mensagem: $e');
       ScaffoldMessenger.of(context).showSnackBar(
