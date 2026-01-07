@@ -747,6 +747,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           isOnline: false,
           latitude: json['latitude'],
           longitude: json['longitude'],
+          isVerified: json['is_verified'] ?? false,
         )).toList();
         
         // Filter by age
@@ -935,6 +936,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         }
         _position = Offset.zero;
         _isDragging = false;
+        
+        // Infinite Scroll: Carrega mais se tiver pouco card
+        if (profiles.length <= 5 && _hasMoreProfiles && !_isLoadingMore) {
+          print('Infinite Scroll Triggered! Remaining: ${profiles.length}');
+          _fetchProfiles(loadMore: true);
+        }
       });
     });
   }
@@ -1216,15 +1223,33 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       final userId = supabase.auth.currentUser?.id;
 
       if (userId != null) {
-        // 1. Delete the match
+        // 1. Delete all messages from the match
+        final matchData = await supabase.from('matches')
+            .select('id')
+            .or('and(user1_id.eq.$userId,user2_id.eq.${profile.id}),and(user1_id.eq.${profile.id},user2_id.eq.$userId)')
+            .maybeSingle();
+        
+        if (matchData != null) {
+          await supabase.from('messages').delete().eq('match_id', matchData['id']);
+        }
+        
+        // 2. Delete the match
         await supabase.from('matches').delete()
             .or('and(user1_id.eq.$userId,user2_id.eq.${profile.id}),and(user1_id.eq.${profile.id},user2_id.eq.$userId)');
 
-        // 2. Add both users to each other's passes
+        // 3. Delete likes from both users (removes from "Enviados" and "Recebidos")
+        await supabase.from('likes').delete()
+            .or('and(liker_id.eq.$userId,liked_id.eq.${profile.id}),and(liker_id.eq.${profile.id},liked_id.eq.$userId)');
+        
+        // 4. Delete super_likes from both users
+        await supabase.from('super_likes').delete()
+            .or('and(liker_id.eq.$userId,liked_id.eq.${profile.id}),and(liker_id.eq.${profile.id},liked_id.eq.$userId)');
+
+        // 5. Add both users to each other's passes (so they don't see each other again)
         await supabase.from('passes').upsert({'user_id': userId, 'passed_id': profile.id});
         await supabase.from('passes').upsert({'user_id': profile.id, 'passed_id': userId});
 
-        // 3. Clear cache
+        // 6. Clear cache
         _interestFutures.clear();
 
         if (mounted) {
@@ -2971,15 +2996,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                             _getMyProfile(); // Recarrega dados
                           }
                         },
-                        icon: const Icon(Icons.verified_user_outlined, color: Colors.white),
+                        icon: const Icon(Icons.verified, color: Colors.white, size: 22),
                         label: const Text(
                           'Verificar Perfil',
-                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
                         ),
                         style: TextButton.styleFrom(
-                          backgroundColor: Colors.white.withOpacity(0.15),
-                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                          backgroundColor: Colors.blue,
+                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(25)),
+                          elevation: 4,
+                          shadowColor: Colors.blue.withOpacity(0.5),
                         ),
                       ),
                     
@@ -4761,12 +4788,27 @@ class _ProfileCardState extends State<ProfileCard> {
                                 ),
                               ),
                               if (widget.profile.isVerified) ...[
-                                const SizedBox(width: 6),
-                                const Icon(
-                                  Icons.verified,
-                                  color: Colors.lightBlueAccent,
-                                  size: 20,
-                                  shadows: [Shadow(blurRadius: 2, color: Colors.black45)],
+                                const SizedBox(width: 8),
+                                Container(
+                                  padding: const EdgeInsets.all(2),
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.lightBlueAccent.withOpacity(0.6),
+                                        blurRadius: 8,
+                                        spreadRadius: 2,
+                                      ),
+                                    ],
+                                  ),
+                                  child: const Icon(
+                                    Icons.verified,
+                                    color: Colors.lightBlueAccent,
+                                    size: 26,
+                                    shadows: [
+                                      Shadow(blurRadius: 4, color: Colors.black54),
+                                    ],
+                                  ),
                                 ),
                               ],
                             ],
@@ -5147,17 +5189,28 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
                       fit: StackFit.expand,
                       children: [
                         // Foto Atual
-                        ClipRRect(
-                          borderRadius: const BorderRadius.only(
-                            topLeft: Radius.circular(20),
-                            topRight: Radius.circular(20),
+                        Container(
+                          decoration: BoxDecoration(
+                            color: Colors.black,
+                            borderRadius: const BorderRadius.only(
+                              topLeft: Radius.circular(20),
+                              topRight: Radius.circular(20),
+                            ),
                           ),
-                          child: Image.network(
-                            widget.profile.imageUrls[_currentImageIndex],
-                            fit: BoxFit.cover,
-                            errorBuilder: (ctx, e, st) => Container(
-                              color: Colors.grey[300],
-                              child: const Icon(Icons.person, size: 80, color: Colors.grey),
+                          child: ClipRRect(
+                            borderRadius: const BorderRadius.only(
+                              topLeft: Radius.circular(20),
+                              topRight: Radius.circular(20),
+                            ),
+                            child: Image.network(
+                              widget.profile.imageUrls[_currentImageIndex],
+                              fit: BoxFit.contain,
+                              width: double.infinity,
+                              height: double.infinity,
+                              errorBuilder: (ctx, e, st) => Container(
+                                color: Colors.grey[300],
+                                child: const Icon(Icons.person, size: 80, color: Colors.grey),
+                              ),
                             ),
                           ),
                         ),
@@ -5213,25 +5266,38 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
                         ),
                       ],
                       
-                      // Indicadores de Página (Barras no topo)
+                      // Indicadores de Página (Bolinhas na parte inferior)
                       if (widget.profile.imageUrls.length > 1)
                         Positioned(
-                          top: MediaQuery.of(context).padding.top + 50,
-                          left: 20,
-                          right: 20,
+                          bottom: 50,
+                          left: 0,
+                          right: 0,
                           child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
                             children: List.generate(
                               widget.profile.imageUrls.length,
-                              (index) => Expanded(
-                                child: Container(
-                                  margin: const EdgeInsets.symmetric(horizontal: 2),
-                                  height: 3,
-                                  decoration: BoxDecoration(
-                                    color: _currentImageIndex == index
-                                        ? Colors.white
-                                        : Colors.white.withOpacity(0.4),
-                                    borderRadius: BorderRadius.circular(2),
+                              (index) => Container(
+                                margin: const EdgeInsets.symmetric(horizontal: 4),
+                                width: _currentImageIndex == index ? 10 : 8,
+                                height: _currentImageIndex == index ? 10 : 8,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: _currentImageIndex == index
+                                      ? Colors.white
+                                      : Colors.white.withOpacity(0.4),
+                                  border: Border.all(
+                                    color: Colors.white.withOpacity(0.6),
+                                    width: 1,
                                   ),
+                                  boxShadow: _currentImageIndex == index
+                                      ? [
+                                          BoxShadow(
+                                            color: Colors.white.withOpacity(0.5),
+                                            blurRadius: 4,
+                                            spreadRadius: 1,
+                                          ),
+                                        ]
+                                      : null,
                                 ),
                               ),
                             ),
@@ -5303,15 +5369,29 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
                                         color: Color(0xFF2D3748),
                                       ),
                                     ),
-                                    const SizedBox(width: 8),
-                                    Container(
-                                      padding: const EdgeInsets.all(4),
-                                      decoration: BoxDecoration(
-                                        color: Colors.blue.withOpacity(0.1),
-                                        shape: BoxShape.circle,
+                                    if (widget.profile.isVerified) ...[
+                                      const SizedBox(width: 10),
+                                      Container(
+                                        padding: const EdgeInsets.all(6),
+                                        decoration: BoxDecoration(
+                                          gradient: LinearGradient(
+                                            colors: [Colors.blue.withOpacity(0.15), Colors.lightBlueAccent.withOpacity(0.1)],
+                                            begin: Alignment.topLeft,
+                                            end: Alignment.bottomRight,
+                                          ),
+                                          shape: BoxShape.circle,
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: Colors.blue.withOpacity(0.3),
+                                              blurRadius: 10,
+                                              spreadRadius: 2,
+                                            ),
+                                          ],
+                                          border: Border.all(color: Colors.blue.withOpacity(0.3), width: 1),
+                                        ),
+                                        child: const Icon(Icons.verified, color: Colors.blue, size: 28),
                                       ),
-                                      child: const Icon(Icons.verified, color: Colors.blue, size: 20),
-                                    ),
+                                    ],
                                   ],
                                 ),
                                 if (widget.profile.gender != null) ...[

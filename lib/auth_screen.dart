@@ -110,7 +110,7 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
           } else if (response.user != null) {
             print('Usuário criado, mas sem sessão. Verificação de email pode estar ativa?');
             // Usuário criado, mas precisa confirmar email
-            _showSuccess('Conta criada com sucesso! Faça login para continuar.');
+            _showEmailConfirmationDialog();
             setState(() {
               _isLogin = true; // Volta para tela de login
               _isLoading = false;
@@ -127,6 +127,26 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
     } catch (e) {
       print('Erro genérico: $e');
       _showError('Erro inesperado: $e');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _signInWithGoogle() async {
+    try {
+      setState(() => _isLoading = true);
+      
+      final supabase = Supabase.instance.client;
+      await supabase.auth.signInWithOAuth(
+        OAuthProvider.google,
+        redirectTo: 'https://pettfehkjvndxcoxalqm.supabase.co/auth/v1/callback',
+      );
+      
+      // O redirecionamento acontece automaticamente
+      // Quando voltar, o listener de auth vai pegar
+    } catch (e) {
+      print('Erro no login com Google: $e');
+      _showError('Erro ao entrar com Google: $e');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -160,6 +180,112 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
           TextButton(
             onPressed: () => Navigator.pop(ctx),
             child: const Text('Ótimo!'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showEmailConfirmationDialog() {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: const Color(0xFF667eea).withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.mark_email_read_rounded, color: Color(0xFF667eea), size: 28),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Quase lá!',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Sua conta foi criada com sucesso!',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.green),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFF667eea).withOpacity(0.05),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFF667eea).withOpacity(0.2)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.email_outlined, color: Colors.grey[700], size: 20),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Text(
+                          'Confirme seu email',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Enviamos um link de confirmação para o seu email. Por favor, acesse sua caixa de entrada e clique no link para ativar sua conta.',
+                    style: TextStyle(
+                      color: Colors.grey[700],
+                      fontSize: 14,
+                      height: 1.5,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Icon(Icons.info_outline, color: Colors.orange[700], size: 16),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          'Verifique também a pasta de spam.',
+                          style: TextStyle(
+                            color: Colors.orange[700],
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF667eea),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+            ),
+            child: const Text(
+              'Entendi',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+            ),
           ),
         ],
       ),
@@ -507,6 +633,55 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                                           letterSpacing: 1,
                                         ),
                                       ),
+                              ),
+                            ),
+                            
+                            // Divider "ou"
+                            Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 20),
+                              child: Row(
+                                children: [
+                                  Expanded(child: Divider(color: Colors.grey[300])),
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                                    child: Text(
+                                      'ou',
+                                      style: TextStyle(
+                                        color: Colors.grey[500],
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ),
+                                  Expanded(child: Divider(color: Colors.grey[300])),
+                                ],
+                              ),
+                            ),
+                            
+                            // Link Google (discreto)
+                            Center(
+                              child: TextButton(
+                                onPressed: _isLoading ? null : _signInWithGoogle,
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Image.network(
+                                      'https://www.google.com/favicon.ico',
+                                      height: 16,
+                                      width: 16,
+                                      errorBuilder: (ctx, err, stack) => Icon(Icons.g_mobiledata, size: 18, color: Colors.grey[500]),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      _isLogin ? 'Entrar com Google' : 'Cadastrar com Google',
+                                      style: TextStyle(
+                                        color: Colors.grey[500],
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
                           ],

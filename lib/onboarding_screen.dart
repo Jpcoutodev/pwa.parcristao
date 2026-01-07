@@ -259,8 +259,13 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
           return false;
         }
         final age = DateTime.now().year - _selectedDate!.year;
-        if (age < 18) {
-          _showError('Você precisa ter pelo menos 18 anos.');
+        // Ajustar se ainda não fez aniversário este ano
+        final today = DateTime.now();
+        final birthday = DateTime(_selectedDate!.year + age, _selectedDate!.month, _selectedDate!.day);
+        final actualAge = today.isBefore(birthday) ? age - 1 : age;
+        
+        if (actualAge < 18) {
+          _showUnderageDialog();
           return false;
         }
         return true;
@@ -313,6 +318,106 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         margin: const EdgeInsets.all(20),
+      ),
+    );
+  }
+
+  void _showUnderageDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.red.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.block, color: Colors.red, size: 28),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Acesso Restrito',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Você precisa ter 18 anos ou mais.',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.red.withOpacity(0.05),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.red.withOpacity(0.2)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.favorite, color: Colors.red[700], size: 20),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Text(
+                          'App de Relacionamento',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Por se tratar de um aplicativo de relacionamento, o Par Cristão é destinado exclusivamente a maiores de 18 anos.\n\nNão é possível continuar com o cadastro.',
+                    style: TextStyle(
+                      color: Colors.grey[700],
+                      fontSize: 14,
+                      height: 1.5,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              // Fazer logout
+              await Supabase.instance.client.auth.signOut();
+              // Redirecionar para tela de login
+              if (mounted) {
+                Navigator.pushAndRemoveUntil(
+                  context,
+                  MaterialPageRoute(builder: (context) => const AuthScreen()),
+                  (route) => false,
+                );
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+            ),
+            child: const Text(
+              'Entendi',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ],
       ),
     );
   }

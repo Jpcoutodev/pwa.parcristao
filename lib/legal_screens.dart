@@ -144,6 +144,16 @@ class TermsOfUseScreen extends StatelessWidget {
           'O serviço é fornecido "como está". Não garantimos que o serviço será ininterrupto ou livre de erros.\n\n'
           'IMPORTANTE: Não nos responsabilizamos pela veracidade das informações fornecidas por outros usuários. Não realizamos verificação de antecedentes criminais. Você é o único responsável por suas interações e deve ter cautela ao compartilhar informações pessoais. Não nos responsabilizamos por qualquer engano, dano ou prejuízo decorrente de interações com outros usuários.',
         ),
+        SectionTitle('6. Selo de Verificação'),
+        SectionText(
+          'O selo de verificação (ícone azul ao lado do nome) indica que o usuário passou por um processo de verificação de identidade através de selfie com gesto.\n\n'
+          'IMPORTANTE:\n'
+          '• Apenas perfis com o selo de verificação foram verificados.\n'
+          '• Perfis SEM o selo não passaram por verificação de identidade.\n'
+          '• A verificação confirma apenas que a pessoa corresponde às fotos do perfil, NÃO garante caráter, intenções ou antecedentes.\n'
+          '• Se um usuário verificado alterar suas fotos, o selo é removido automaticamente e uma nova verificação será necessária.\n\n'
+          'Recomendamos cautela adicional ao interagir com perfis não verificados.',
+        ),
       ],
     );
   }
@@ -166,7 +176,8 @@ class PrivacyPolicyScreen extends StatelessWidget {
           'Coletamos informações que você nos fornece diretamente, como:\n'
           '• Dados de cadastro (nome, e-mail, data de nascimento).\n'
           '• Informações do perfil (fotos, bio, igreja, interesses).\n'
-          '• Localização (para mostrar pessoas próximas).',
+          '• Localização (para mostrar pessoas próximas).\n\n'
+          'Coletamos informações sobre sua denominação religiosa estritamente para conectar você com perfis compatíveis, conforme o objetivo do aplicativo.',
         ),
         SectionTitle('2. Como Usamos Seus Dados'),
         SectionText(
@@ -187,6 +198,15 @@ class PrivacyPolicyScreen extends StatelessWidget {
         SectionTitle('5. Seus Direitos'),
         SectionText(
           'Você pode acessar, corrigir ou excluir sua conta e seus dados a qualquer momento através das configurações do aplicativo.',
+        ),
+        SectionTitle('6. Verificação de Perfil'),
+        SectionText(
+          'Oferecemos um sistema voluntário de verificação de identidade através de selfie com gesto. Ao solicitar verificação:\n\n'
+          '• Você nos envia uma selfie realizando um gesto específico.\n'
+          '• Comparamos a selfie com as fotos do seu perfil.\n'
+          '• Se aprovado, seu perfil recebe um selo de verificação (ícone azul).\n'
+          '• Se você alterar suas fotos após a verificação, o selo é removido automaticamente.\n\n'
+          'A selfie de verificação é armazenada de forma segura e utilizada exclusivamente para fins de verificação de identidade.',
         ),
       ],
     );

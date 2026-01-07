@@ -29,9 +29,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   String _selectedMinistry = 'Participante';
   List<String> _selectedInterests = [];
   
+  // Verification status
+  bool _isVerified = false;
+  bool _photosChanged = false; // Track if photos were modified
+  
   // Images
   // Lista mista: pode conter String (url) ou XFile (arquivo novo)
   List<dynamic> _profileImages = []; 
+  List<dynamic> _originalImages = []; // To compare if photos changed
   final ImagePicker _picker = ImagePicker();
 
   // Colors (Mesma paleta do Onboarding)
@@ -80,7 +85,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         // Images
         if (data['image_urls'] != null) {
           _profileImages = List<dynamic>.from(data['image_urls']);
+          _originalImages = List<dynamic>.from(data['image_urls']); // Store original
         }
+        
+        // Verification status
+        _isVerified = data['is_verified'] ?? false;
         
         _isLoading = false;
       });
@@ -93,7 +102,114 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     }
   }
 
+  Future<bool> _showVerificationWarning() async {
+    if (!_isVerified || _photosChanged) {
+      return true; // Already lost verification or not verified
+    }
+    
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.orange.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 28),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Perda de Verificação',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Seu perfil está verificado!',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.orange.withOpacity(0.05),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.orange.withOpacity(0.2)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.verified, color: Colors.blue[700], size: 20),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Text(
+                          'Alterar suas fotos removerá o selo de verificação.',
+                          style: TextStyle(fontWeight: FontWeight.w500, fontSize: 14),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Você precisará verificar seu perfil novamente após a alteração.',
+                    style: TextStyle(
+                      color: Colors.grey[700],
+                      fontSize: 14,
+                      height: 1.5,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(
+              'Cancelar',
+              style: TextStyle(color: Colors.grey[600], fontWeight: FontWeight.w600),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orange,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            child: const Text(
+              'Continuar',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ],
+      ),
+    );
+    
+    if (result == true) {
+      setState(() => _photosChanged = true);
+    }
+    return result ?? false;
+  }
+
   Future<void> _pickImage() async {
+    // Show warning if verified
+    final proceed = await _showVerificationWarning();
+    if (!proceed) return;
+    
     try {
       final List<XFile> images = await _picker.pickMultiImage(
         imageQuality: 70,
@@ -120,7 +236,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     }
   }
 
-  void _removeImage(int index) {
+  Future<void> _removeImage(int index) async {
+    // Show warning if verified
+    final proceed = await _showVerificationWarning();
+    if (!proceed) return;
+    
     setState(() {
       _profileImages.removeAt(index);
     });
@@ -172,7 +292,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       }
 
       // 2. Update Profile
-      await supabase.from('profiles').upsert({
+      final Map<String, dynamic> profileData = {
         'id': userId,
         'name': _nameController.text,
         'age': _selectedDate != null ? (DateTime.now().year - _selectedDate!.year) : 0,
@@ -185,7 +305,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         'interests': _selectedInterests,
         'image_urls': finalImageUrls,
         'updated_at': DateTime.now().toIso8601String(),
-      });
+      };
+      
+      // Invalidate verification if photos were changed
+      if (_photosChanged) {
+        profileData['is_verified'] = false;
+      }
+      
+      await supabase.from('profiles').upsert(profileData);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
