@@ -1,5 +1,6 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart'; // Para kIsWeb
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:novo_app/main.dart'; // Para HomeScreen
 import 'package:novo_app/onboarding_screen.dart';
@@ -95,6 +96,9 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
         final response = await supabase.auth.signUp(
           email: email,
           password: password,
+          emailRedirectTo: kIsWeb 
+              ? null // Web usa o padrão configurado no Supabase
+              : 'app.parcristao://login-callback', // Mobile usa o deep link
         );
         
         print('Resposta do cadastro: User=${response.user}, Session=${response.session}');
@@ -139,7 +143,9 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
       final supabase = Supabase.instance.client;
       await supabase.auth.signInWithOAuth(
         OAuthProvider.google,
-        redirectTo: 'https://pettfehkjvndxcoxalqm.supabase.co/auth/v1/callback',
+        redirectTo: kIsWeb 
+            ? 'https://pettfehkjvndxcoxalqm.supabase.co/auth/v1/callback' 
+            : 'app.parcristao://login-callback',
       );
       
       // O redirecionamento acontece automaticamente
