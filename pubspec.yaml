@@ -38,6 +38,7 @@ dependencies:
   geocoding: ^4.0.0
   http: ^1.1.0
   audioplayers: ^5.2.1
+  confetti: ^0.7.0
 
 dev_dependencies:
   flutter_test:

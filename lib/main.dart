@@ -9,6 +9,7 @@ import 'package:novo_app/chat_screen.dart'; // Import Chat Screen
 import 'package:novo_app/verification_screen.dart'; // Import Verification Screen
 import 'package:geolocator/geolocator.dart';
 import 'package:audioplayers/audioplayers.dart'; // For notification sounds
+import 'package:confetti/confetti.dart'; // For match celebration
 
 import 'package:flutter/services.dart'; // Importante para controlar orientação
 
@@ -307,6 +308,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   // Audio player for notification sounds
   final AudioPlayer _notificationPlayer = AudioPlayer();
   bool _soundEnabled = true; // Sound notifications enabled by default
+  bool _hapticEnabled = true; // Haptic feedback enabled by default
   
 
 
@@ -678,6 +680,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             
             // Only increment counter if message is from someone else
             if (senderId != userId && mounted) {
+              // Haptic feedback for new message
+              if (_hapticEnabled) HapticFeedback.lightImpact();
+              
               setState(() {
                 _messagesNotificationCount++;
               });
@@ -994,6 +999,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final size = MediaQuery.of(context).size;
     Offset endOffset;
     
+    // Play swipe sound
+    _playSwipeSound();
+    
     if (status == SwipeStatus.like) {
       endOffset = Offset(size.width * 1.5, _position.dy);
     } else if (status == SwipeStatus.dislike) {
@@ -1138,6 +1146,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     if (profiles.isEmpty) return;
     final currentProfile = profiles.last; // Swiping the TOP card
     
+    // Haptic feedback for like action
+    if (_hapticEnabled) HapticFeedback.lightImpact();
+    
     setState(() {
       _position = const Offset(150, 0);
     });
@@ -1149,6 +1160,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   void _onDislike() async {
     if (profiles.isEmpty) return;
     final currentProfile = profiles.last;
+    
+    // Haptic feedback for dislike action (lighter than like)
+    if (_hapticEnabled) HapticFeedback.selectionClick();
     
     setState(() {
       _position = const Offset(-150, 0);
@@ -1353,7 +1367,43 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
   }
 
+  // Play subtle swipe sound
+  Future<void> _playSwipeSound() async {
+    if (!_soundEnabled) return;
+    
+    try {
+      // Play a very subtle swoosh sound
+      // Using lower volume for swipe (0.3 = 30% volume)
+      await _notificationPlayer.setVolume(0.3);
+      await _notificationPlayer.play(AssetSource('sounds/swipe.wav'));
+      // Reset volume for other sounds
+      await _notificationPlayer.setVolume(1.0);
+    } catch (e) {
+      // Fail silently - sound is not critical
+    }
+  }
+
+  // Play match notification sound
+  Future<void> _playMatchSound() async {
+    if (!_soundEnabled) return;
+    
+    try {
+      // Play a simple notification sound
+      // You can replace this with a custom sound file later
+      await _notificationPlayer.play(AssetSource('sounds/notification.wav'));
+    } catch (e) {
+      print('Error playing match sound: $e');
+      // Fail silently - sound is not critical
+    }
+  }
+
   void _showReciprocalInterestDialog(Profile targetProfile) {
+    // Haptic feedback for match (medium impact)
+    if (_hapticEnabled) HapticFeedback.mediumImpact();
+    
+    // Play match sound
+    _playMatchSound();
+    
     showGeneralDialog(
       context: context,
       barrierDismissible: true,
@@ -4072,6 +4122,63 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     ),
                   ),
                   
+                  const SizedBox(height: 12),
+                  
+                  // Haptic Feedback Toggle
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(15),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.05),
+                          blurRadius: 10,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          _hapticEnabled ? Icons.vibration : Icons.phonelink_erase,
+                          color: const Color(0xFF667eea),
+                          size: 24,
+                        ),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Vibração',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              SizedBox(height: 2),
+                              Text(
+                                'Feedback tátil ao interagir',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: Colors.grey,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Switch(
+                          value: _hapticEnabled,
+                          activeColor: const Color(0xFF667eea),
+                          onChanged: (value) {
+                            setState(() => _hapticEnabled = value);
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  
                   const SizedBox(height: 30),
                   
                   // Ver Perfis Rejeitados Button
@@ -5906,6 +6013,7 @@ class MatchAnimationOverlay extends StatefulWidget {
 
 class _MatchAnimationOverlayState extends State<MatchAnimationOverlay> with TickerProviderStateMixin {
   late AnimationController _heartController;
+  late ConfettiController _confettiController;
   final List<Widget> _hearts = [];
 
   @override
@@ -5916,6 +6024,12 @@ class _MatchAnimationOverlayState extends State<MatchAnimationOverlay> with Tick
       duration: const Duration(seconds: 2),
     )..repeat();
     
+    // Initialize confetti controller
+    _confettiController = ConfettiController(duration: const Duration(seconds: 3));
+    
+    // Start confetti immediately
+    _confettiController.play();
+    
     // Generate floating hearts
     for (int i = 0; i < 15; i++) {
       _hearts.add(_buildFloatingHeart());
@@ -5925,6 +6039,7 @@ class _MatchAnimationOverlayState extends State<MatchAnimationOverlay> with Tick
   @override
   void dispose() {
     _heartController.dispose();
+    _confettiController.dispose();
     super.dispose();
   }
 
@@ -5957,6 +6072,27 @@ class _MatchAnimationOverlayState extends State<MatchAnimationOverlay> with Tick
   Widget build(BuildContext context) {
     return Stack(
       children: [
+        // Confetti from top center
+        Align(
+          alignment: Alignment.topCenter,
+          child: ConfettiWidget(
+            confettiController: _confettiController,
+            blastDirection: 1.57, // radians - down
+            emissionFrequency: 0.05,
+            numberOfParticles: 50,
+            maxBlastForce: 100,
+            minBlastForce: 80,
+            gravity: 0.3,
+            colors: const [
+              Colors.pinkAccent,
+              Colors.purpleAccent,
+              Color(0xFFFFD700), // Gold
+              Colors.redAccent,
+              Colors.pink,
+              Color(0xFFFF1493), // Deep pink
+            ],
+          ),
+        ),
         // Main Content
         Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -6014,6 +6150,8 @@ class _MatchAnimationOverlayState extends State<MatchAnimationOverlay> with Tick
              ),
           ],
         ),
+        // Floating hearts
+        ..._hearts,
       ],
     );
   }
