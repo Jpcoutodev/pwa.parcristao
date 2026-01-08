@@ -1,3 +1,4 @@
+import 'dart:async'; // Para StreamSubscription
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart'; // Para kIsWeb
@@ -25,6 +26,7 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
 
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
+  late final StreamSubscription<AuthState> _authSubscription;
 
   @override
   void initState() {
@@ -37,10 +39,19 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
       CurvedAnimation(parent: _animationController, curve: Curves.easeOut),
     );
     _animationController.forward();
+    
+    // Escuta mudanças na autenticação (Google Login, Link de Email, etc)
+    _authSubscription = Supabase.instance.client.auth.onAuthStateChange.listen((data) {
+      if (data.session != null && mounted) {
+        print('Auth State Change: Logado! Navegando...');
+        _checkProfileAndNavigate();
+      }
+    });
   }
 
   @override
   void dispose() {
+    _authSubscription.cancel(); // Cancela o listener para não dar erro
     _emailController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
