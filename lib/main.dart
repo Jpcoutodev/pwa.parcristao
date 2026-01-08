@@ -29,15 +29,104 @@ void main() async {
   runApp(const ParCristaoApp());
 }
 
+class StartupScreen extends StatefulWidget {
+  const StartupScreen({super.key});
+
+  @override
+  State<StartupScreen> createState() => _StartupScreenState();
+}
+
+class _StartupScreenState extends State<StartupScreen> {
+  @override
+  void initState() {
+    super.initState();
+    _checkSessionAndProfile();
+  }
+
+  Future<void> _checkSessionAndProfile() async {
+    // Wait for a moment to show the splash/loading (optional, prevents flicker)
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    final session = Supabase.instance.client.auth.currentSession;
+    if (session == null) {
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const AuthScreen()),
+        );
+      }
+      return;
+    }
+
+    try {
+      final userId = session.user.id;
+      final data = await Supabase.instance.client
+          .from('profiles')
+          .select('name, image_urls')
+          .eq('id', userId)
+          .maybeSingle();
+
+      if (data == null) {
+         // Profile doesn't exist at all -> Onboarding
+         if (mounted) {
+           Navigator.of(context).pushReplacement(
+             MaterialPageRoute(builder: (_) => const OnboardingScreen()),
+           );
+         }
+         return;
+      }
+
+      final name = data['name'] as String?;
+      final imageUrls = (data['image_urls'] as List<dynamic>?)?.cast<String>() ?? [];
+
+      // Check if profile is incomplete (missing name or photos)
+      if (name == null || name.isEmpty || imageUrls.isEmpty) {
+        if (mounted) {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const OnboardingScreen()),
+          );
+        }
+      } else {
+        // Profile complete -> Home
+        if (mounted) {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const HomeScreen()),
+          );
+        }
+      }
+    } catch (e) {
+      print('Error checking profile: $e');
+      // On error, default to Auth to be safe
+       if (mounted) {
+         Navigator.of(context).pushReplacement(
+           MaterialPageRoute(builder: (_) => const AuthScreen()),
+         );
+       }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(
+      backgroundColor: Colors.white,
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircularProgressIndicator(color: Color(0xFF667eea)),
+            SizedBox(height: 20),
+            Text('Carregando...', style: TextStyle(color: Colors.grey)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class ParCristaoApp extends StatelessWidget {
   const ParCristaoApp({super.key});
 
   @override
   Widget build(BuildContext context) {
-    // Check if user is logged in
-    final session = Supabase.instance.client.auth.currentSession;
-    final initialScreen = session != null ? const HomeScreen() : const AuthScreen();
-
     return MaterialApp(
       title: 'Par Cristão',
       debugShowCheckedModeBanner: false,
@@ -46,7 +135,7 @@ class ParCristaoApp extends StatelessWidget {
         fontFamily: 'Roboto',
         scaffoldBackgroundColor: const Color(0xFFF5F5F5),
       ),
-      home: initialScreen,
+      home: const StartupScreen(),
     );
   }
 }

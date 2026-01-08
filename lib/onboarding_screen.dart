@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb; // IMPORTANTE para verificar se é Web
 import 'dart:math' as math;
@@ -8,6 +9,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:novo_app/auth_screen.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
+import 'package:http/http.dart' as http;
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
@@ -66,6 +68,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
   double? _longitude;
   bool _useManualLocation = false;
   bool _isLoadingLocation = false;
+  bool _showManualCityInput = false;
+  final TextEditingController _manualCityController = TextEditingController();
+  bool _isGeocodingCity = false;
 
   Future<void> _pickImagesFromGallery() async {
     try {
@@ -1408,6 +1413,93 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
               ),
             ],
           ),
+          
+          const SizedBox(height: 24),
+          
+          // Subtle fallback link
+          if (!_showManualCityInput)
+            TextButton(
+              onPressed: () => setState(() => _showManualCityInput = true),
+              child: Text(
+                'Não consegue usar GPS? Digite sua cidade',
+                style: TextStyle(
+                  color: Colors.grey[500],
+                  fontSize: 13,
+                  decoration: TextDecoration.underline,
+                ),
+              ),
+            ),
+          
+          // Manual city input (shown when link is tapped)
+          if (_showManualCityInput) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.grey[50],
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.grey[300]!),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Digite sua cidade',
+                    style: TextStyle(
+                      color: Colors.grey[700],
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _manualCityController,
+                    decoration: InputDecoration(
+                      hintText: 'Ex: São Paulo, SP',
+                      hintStyle: TextStyle(color: Colors.grey[400]),
+                      prefixIcon: Icon(Icons.search, color: Colors.grey[400]),
+                      filled: true,
+                      fillColor: Colors.white,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide(color: Colors.grey[300]!),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide(color: Colors.grey[300]!),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide(color: _primaryColor, width: 2),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                    ),
+                    textInputAction: TextInputAction.search,
+                    onSubmitted: (_) => _geocodeCityName(),
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: _isGeocodingCity
+                        ? const Center(child: CircularProgressIndicator())
+                        : ElevatedButton.icon(
+                            onPressed: _geocodeCityName,
+                            icon: const Icon(Icons.location_searching, size: 18),
+                            label: const Text('Buscar Localização'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: _primaryColor,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                            ),
+                          ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -1521,6 +1613,94 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
         _isLoadingLocation = false;
         _useManualLocation = true;
       });
+    }
+  }
+
+  /// Geocode city name using Nominatim (OpenStreetMap) API
+  Future<void> _geocodeCityName() async {
+    final cityName = _manualCityController.text.trim();
+    if (cityName.isEmpty) {
+      _showError('Digite o nome de uma cidade');
+      return;
+    }
+
+    setState(() => _isGeocodingCity = true);
+
+    try {
+      // Call Nominatim API (free geocoding service)
+      final encodedCity = Uri.encodeComponent('$cityName, Brasil');
+      final url = 'https://nominatim.openstreetmap.org/search?q=$encodedCity&format=json&limit=1&countrycodes=br';
+      
+      final response = await http.get(
+        Uri.parse(url),
+        headers: {
+          'User-Agent': 'ParCristaoApp/1.0', // Required by Nominatim
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final List<dynamic> results = json.decode(response.body);
+        
+        if (results.isNotEmpty) {
+          final result = results[0];
+          final lat = double.parse(result['lat']);
+          final lon = double.parse(result['lon']);
+          final displayName = result['display_name'] as String;
+          
+          // Parse city and state from display_name
+          // Format: "City, State, Region, Brazil"
+          final parts = displayName.split(', ');
+          String city = parts.isNotEmpty ? parts[0] : cityName;
+          String state = '';
+          
+          // Try to find state abbreviation
+          final stateMap = {
+            'São Paulo': 'SP', 'Rio de Janeiro': 'RJ', 'Minas Gerais': 'MG',
+            'Bahia': 'BA', 'Paraná': 'PR', 'Rio Grande do Sul': 'RS',
+            'Pernambuco': 'PE', 'Ceará': 'CE', 'Pará': 'PA', 'Santa Catarina': 'SC',
+            'Goiás': 'GO', 'Maranhão': 'MA', 'Amazonas': 'AM', 'Paraíba': 'PB',
+            'Espírito Santo': 'ES', 'Rio Grande do Norte': 'RN', 'Alagoas': 'AL',
+            'Piauí': 'PI', 'Mato Grosso': 'MT', 'Distrito Federal': 'DF',
+            'Mato Grosso do Sul': 'MS', 'Sergipe': 'SE', 'Rondônia': 'RO',
+            'Tocantins': 'TO', 'Acre': 'AC', 'Amapá': 'AP', 'Roraima': 'RR',
+          };
+          
+          for (var part in parts) {
+            if (stateMap.containsKey(part)) {
+              state = stateMap[part]!;
+              break;
+            }
+          }
+
+          setState(() {
+            _latitude = lat;
+            _longitude = lon;
+            _cityController.text = city;
+            if (state.isNotEmpty) _selectedState = state;
+            _selectedCountry = 'Brasil';
+            _isGeocodingCity = false;
+            _showManualCityInput = false;
+          });
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('✓ Localização encontrada!'),
+              backgroundColor: Colors.green,
+              duration: Duration(seconds: 2),
+            ),
+          );
+        } else {
+          setState(() => _isGeocodingCity = false);
+          _showError('Cidade não encontrada. Verifique o nome e tente novamente.');
+        }
+      } else {
+        setState(() => _isGeocodingCity = false);
+        _showError('Erro ao buscar localização. Tente novamente.');
+      }
+    } catch (e) {
+      print('Erro no geocoding: $e');
+      setState(() => _isGeocodingCity = false);
+      _showError('Erro ao buscar localização. Verifique sua conexão.');
     }
   }
 
