@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:novo_app/main.dart'; // To access Profile class
 import 'package:novo_app/chat_screen.dart'; // Import Chat Screen
+import 'package:cached_network_image/cached_network_image.dart';
 
 class ProfileDetailScreen extends StatefulWidget {
   final Profile profile;
@@ -80,10 +81,11 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
                     fit: StackFit.expand,
                     children: [
                       // Foto atual
-                      Image.network(
-                        profile.imageUrls[_currentPhotoIndex],
+                      CachedNetworkImage(
+                        imageUrl: profile.imageUrls[_currentPhotoIndex],
                         fit: BoxFit.cover,
-                        errorBuilder: (ctx, e, st) => Container(
+                        placeholder: (context, url) => Container(color: Colors.grey[300]),
+                        errorWidget: (ctx, url, error) => Container(
                           color: Colors.grey[300],
                           child: const Icon(Icons.person, size: 80, color: Colors.grey),
                         ),

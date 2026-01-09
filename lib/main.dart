@@ -13,6 +13,8 @@ import 'package:audioplayers/audioplayers.dart'; // For notification sounds
 
 import 'package:flutter/services.dart'; // Importante para controlar orientação
 import 'package:shared_preferences/shared_preferences.dart'; // Persistência de configurações
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -994,6 +996,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
     // Se clicar na aba de Interesse (index 1), marca likes como vistos no banco
     if (index == 1) {
+      _interestFutures.clear(); // Force refresh of all interest tabs
       _markInterestsAsSeen();
       setState(() {
         _notificationCount = 0;
@@ -1059,7 +1062,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         if (status == SwipeStatus.like) {
           HapticFeedback.lightImpact();
         } else if (status == SwipeStatus.dislike) {
-          HapticFeedback.selectionClick();
+          // Changed to lightImpact to match Like button feel (selectionClick was too weak)
+          HapticFeedback.lightImpact();
         } else if (status == SwipeStatus.superLike) {
           HapticFeedback.mediumImpact();
         }
@@ -1256,8 +1260,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     if (profiles.isEmpty) return;
     final currentProfile = profiles.last;
     
-    // Haptic feedback for dislike action (lighter than like)
-    if (_hapticEnabled) HapticFeedback.selectionClick();
+    // Haptic feedback for dislike action (now same as like)
+    if (_hapticEnabled) HapticFeedback.lightImpact();
     
     setState(() {
       _position = const Offset(-150, 0);
@@ -1287,6 +1291,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   void _onSuperLike() async {
     if (profiles.isEmpty) return;
     final currentProfile = profiles.last;
+    
+    // Haptic feedback for super like (stronger)
+    if (_hapticEnabled) HapticFeedback.mediumImpact();
     
     setState(() {
       _position = const Offset(0, -150);
@@ -1963,10 +1970,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               fit: StackFit.expand,
               children: [
                 // Image
-                Image.network(
-                  profile.imageUrls.isNotEmpty ? profile.imageUrls.first : 'https://via.placeholder.com/300',
+                CachedNetworkImage(
+                  imageUrl: profile.imageUrls.isNotEmpty ? profile.imageUrls.first : 'https://via.placeholder.com/300',
                   fit: BoxFit.cover,
-                  errorBuilder: (ctx, e, st) => Container(color: Colors.grey[300], child: Icon(Icons.person, size: 60, color: Colors.grey[400])),
+                  placeholder: (context, url) => Container(color: Colors.grey[300]),
+                  errorWidget: (ctx, url, error) => Container(color: Colors.grey[300], child: Icon(Icons.person, size: 60, color: Colors.grey[400])),
                 ),
                 // Gradient
                 Container(
@@ -2625,7 +2633,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         ),
                         child: CircleAvatar(
                           radius: 28,
-                          backgroundImage: NetworkImage(
+                          backgroundImage: CachedNetworkImageProvider(
                             profile.imageUrls.isNotEmpty
                                 ? profile.imageUrls.first
                                 : 'https://via.placeholder.com/150',
@@ -3047,7 +3055,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           ),
                           child: CircleAvatar(
                             radius: 65,
-                            backgroundImage: NetworkImage(mainImage),
+                            backgroundImage: CachedNetworkImageProvider(mainImage),
                           ),
                         ),
                         Container(
@@ -4880,16 +4888,20 @@ class _ProfileCardState extends State<ProfileCard> {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            // Imagem de fundo (com fallback para lista vazia)
             if (widget.profile.imageUrls.isNotEmpty)
-              Image.network(
-                widget.profile.imageUrls[_currentImageIndex],
+              CachedNetworkImage(
+                imageUrl: widget.profile.imageUrls[_currentImageIndex],
                 fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) {
+                errorWidget: (context, url, error) {
                   print('Erro ao carregar imagem: $error');
                   return Container(
                     color: Colors.grey[800],
                     child: const Center(child: Icon(Icons.broken_image, size: 100, color: Colors.grey)),
+                  );
+                },
+                placeholder: (context, url) {
+                  return Center(
+                    child: CircularProgressIndicator(),
                   );
                 },
                 loadingBuilder: (context, child, loadingProgress) {
@@ -5495,12 +5507,13 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
                               topLeft: Radius.circular(20),
                               topRight: Radius.circular(20),
                             ),
-                            child: Image.network(
-                              widget.profile.imageUrls[_currentImageIndex],
+                            child: CachedNetworkImage(
+                              imageUrl: widget.profile.imageUrls[_currentImageIndex],
                               fit: BoxFit.contain,
                               width: double.infinity,
                               height: double.infinity,
-                              errorBuilder: (ctx, e, st) => Container(
+                              placeholder: (context, url) => const Center(child: CircularProgressIndicator(color: Colors.white)),
+                              errorWidget: (ctx, url, error) => Container(
                                 color: Colors.grey[300],
                                 child: const Icon(Icons.person, size: 80, color: Colors.grey),
                               ),
@@ -6233,7 +6246,7 @@ class _MatchAnimationOverlayState extends State<MatchAnimationOverlay> with Tick
       ),
       child: CircleAvatar(
         radius: 50,
-        backgroundImage: NetworkImage(url),
+        backgroundImage: CachedNetworkImageProvider(url),
       ),
     );
   }

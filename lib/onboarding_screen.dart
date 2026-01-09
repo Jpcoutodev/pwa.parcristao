@@ -10,6 +10,7 @@ import 'package:novo_app/auth_screen.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:http/http.dart' as http;
+import 'package:cached_network_image/cached_network_image.dart';
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
@@ -2003,7 +2004,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
                       image: DecorationImage(
                         // CORREÇÃO: Usar NetworkImage para Web (blob url) e FileImage para Mobile
                         image: kIsWeb 
-                            ? NetworkImage(image.path) 
+                            ? CachedNetworkImageProvider(image.path) 
                             : FileImage(File(image.path)) as ImageProvider,
                         fit: BoxFit.cover,
                       ),

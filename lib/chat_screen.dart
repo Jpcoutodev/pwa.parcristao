@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:novo_app/main.dart'; // For Profile class
+import 'package:cached_network_image/cached_network_image.dart';
 
 class ChatScreen extends StatefulWidget {
   final String matchId;
@@ -23,6 +24,11 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isLoading = true;
   String? _currentUserId;
   RealtimeChannel? _messagesChannel;
+  
+  // Pagination
+  final int _perPage = 20;
+  bool _isMoreLoading = false;
+  bool _hasMoreMessages = true;
 
   @override
   void initState() {
@@ -30,6 +36,15 @@ class _ChatScreenState extends State<ChatScreen> {
     _currentUserId = Supabase.instance.client.auth.currentUser?.id;
     _fetchMessages();
     _subscribeToMessages();
+    
+    // Listener for infinite scroll
+    _scrollController.addListener(() {
+      if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 200 &&
+          !_isMoreLoading &&
+          _hasMoreMessages) {
+        _loadMoreMessages();
+      }
+    });
   }
 
   void _subscribeToMessages() {
@@ -54,9 +69,11 @@ class _ChatScreenState extends State<ChatScreen> {
             
             if (!alreadyExists) {
               setState(() {
-                _messages.add(newMsg);
+                // Inserir no início (fundo da tela) pois a lista é invertida
+                _messages.insert(0, newMsg);
               });
-              _scrollToBottom();
+              // Não precisa scrollar se já estivermos lá embaixo (index 0)
+              // Mas se o usuário enviou, podemos garantir
             }
             
             // Mark as read if sender is not me
@@ -87,30 +104,71 @@ class _ChatScreenState extends State<ChatScreen> {
           .from('messages')
           .select()
           .eq('match_id', widget.matchId)
-          .order('created_at', ascending: true);
-      
+          .order('created_at', ascending: false) // Newest first
+          .limit(_perPage);
+          
       // Mark unread messages as read
-      if (_currentUserId != null) {
-        await supabase
-          .from('messages')
-          .update({'read': true})
-          .eq('match_id', widget.matchId)
-          .neq('sender_id', _currentUserId as Object) // Mark only messages sent by OTHERS
-          .eq('read', false); 
-      }
+      _markMessagesAsRead();
 
       if (mounted) {
         setState(() {
           _messages = List<Map<String, dynamic>>.from(data);
+          _hasMoreMessages = data.length >= _perPage;
           _isLoading = false;
         });
-        _scrollToBottom();
       }
     } catch (e) {
       print('Erro ao buscar mensagens: $e');
       if (mounted) {
         setState(() => _isLoading = false);
       }
+    }
+  }
+
+  Future<void> _loadMoreMessages() async {
+    if (_isMoreLoading) return;
+    
+    setState(() => _isMoreLoading = true);
+    
+    try {
+      final supabase = Supabase.instance.client;
+      final data = await supabase
+          .from('messages')
+          .select()
+          .eq('match_id', widget.matchId)
+          .order('created_at', ascending: false)
+          .range(_messages.length, _messages.length + _perPage - 1);
+          
+      if (mounted) {
+        setState(() {
+          if (data.isNotEmpty) {
+            _messages.addAll(List<Map<String, dynamic>>.from(data));
+          }
+          if (data.length < _perPage) {
+            _hasMoreMessages = false;
+          }
+          _isMoreLoading = false;
+        });
+      }
+    } catch (e) {
+      print('Erro ao carregar mais mensagens: $e');
+      if (mounted) {
+        setState(() => _isMoreLoading = false);
+      }
+    }
+  }
+
+  Future<void> _markMessagesAsRead() async {
+    if (_currentUserId == null) return;
+    try {
+      await Supabase.instance.client
+          .from('messages')
+          .update({'read': true})
+          .eq('match_id', widget.matchId)
+          .neq('sender_id', _currentUserId as Object)
+          .eq('read', false);
+    } catch (e) {
+       print('Erro ao marcar lido: $e');
     }
   }
 
@@ -122,12 +180,14 @@ class _ChatScreenState extends State<ChatScreen> {
 
     try {
       final supabase = Supabase.instance.client;
+      // Optimistic UI Update (optional, but Realtime is fast enough generally)
+      // For now relying on Realtime to add it to the list
+      
       await supabase.from('messages').insert({
         'match_id': widget.matchId,
         'sender_id': _currentUserId,
         'content': text,
       });
-      // Não precisa chamar _fetchMessages() - o Realtime subscription já adiciona a mensagem
     } catch (e) {
       print('Erro ao enviar mensagem: $e');
       ScaffoldMessenger.of(context).showSnackBar(
@@ -140,7 +200,7 @@ class _ChatScreenState extends State<ChatScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
+          0, // Com reverse=true, 0 é o "fundo"
           duration: const Duration(milliseconds: 300),
           curve: Curves.easeOut,
         );
@@ -162,7 +222,7 @@ class _ChatScreenState extends State<ChatScreen> {
           children: [
             CircleAvatar(
               radius: 18,
-              backgroundImage: NetworkImage(
+              backgroundImage: CachedNetworkImageProvider(
                 widget.targetProfile.imageUrls.isNotEmpty
                     ? widget.targetProfile.imageUrls.first
                     : 'https://via.placeholder.com/150',
@@ -206,10 +266,20 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                       )
                     : ListView.builder(
+                        reverse: true, // Começa de baixo pra cima
                         controller: _scrollController,
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                        itemCount: _messages.length,
+                        // +1 para o spinner de loading no topo
+                        itemCount: _messages.length + (_hasMoreMessages ? 1 : 0),
                         itemBuilder: (context, index) {
+                          // Se for o último item e tiver mais, mostra loader
+                          if (index == _messages.length) {
+                             return const Padding(
+                               padding: EdgeInsets.symmetric(vertical: 20),
+                               child: Center(child: CircularProgressIndicator()),
+                             );
+                          }
+                          
                           final message = _messages[index];
                           final isMe = message['sender_id'] == _currentUserId;
                           return _buildMessageBubble(message, isMe);

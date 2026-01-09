@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dart:math' as math;
 import 'package:novo_app/main.dart'; // Para acessar a classe Profile, se necessário, ou mover Profile para um arquivo separado
+import 'package:cached_network_image/cached_network_image.dart';
 
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({super.key});
@@ -405,10 +406,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                         ImageProvider imageProvider;
                         
                         if (item is String) {
-                          imageProvider = NetworkImage(item);
+                          imageProvider = CachedNetworkImageProvider(item);
                         } else if (item is XFile) {
                            if (kIsWeb) {
-                             imageProvider = NetworkImage(item.path);
+                             imageProvider = CachedNetworkImageProvider(item.path);
                            } else {
                              imageProvider = FileImage(File(item.path));
                            }
