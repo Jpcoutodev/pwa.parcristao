@@ -9,7 +9,6 @@ import 'package:novo_app/chat_screen.dart'; // Import Chat Screen
 import 'package:novo_app/verification_screen.dart'; // Import Verification Screen
 import 'package:geolocator/geolocator.dart';
 import 'package:audioplayers/audioplayers.dart'; // For notification sounds
-import 'package:confetti/confetti.dart'; // For match celebration
 
 import 'package:flutter/services.dart'; // Importante para controlar orientação
 
@@ -521,46 +520,102 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               if (profileData != null && mounted) {
                 final likerProfile = _mapProfile(profileData);
                 
-                // Play notification sound (if enabled)
-                if (_soundEnabled) {
-                  try {
-                    await _notificationPlayer.play(UrlSource('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3'));
-                  } catch (e) {
-                    print('⚠️ Could not play notification sound: $e');
+                // CHECK IF THIS IS A RECIPROCAL LIKE (I already liked them)
+                final myLike = await supabase
+                    .from('likes')
+                    .select()
+                    .eq('liker_id', userId)
+                    .eq('liked_id', likerId)
+                    .maybeSingle();
+                
+                final mySuper = await supabase
+                    .from('super_likes')
+                    .select()
+                    .eq('liker_id', userId)
+                    .eq('liked_id', likerId)
+                    .maybeSingle();
+                
+                final isReciprocal = (myLike != null || mySuper != null);
+                print('DEBUG: Is reciprocal like? $isReciprocal');
+                
+                if (isReciprocal) {
+                  // IT'S A MATCH! Create match automatically
+                  print('💖 RECIPROCAL MATCH DETECTED!');
+                  
+                  // Check if match already exists
+                  final existingMatch = await supabase
+                      .from('matches')
+                      .select()
+                      .or('and(user1_id.eq.$userId,user2_id.eq.$likerId),and(user1_id.eq.$likerId,user2_id.eq.$userId)')
+                      .limit(1)
+                      .maybeSingle();
+                  
+                  if (existingMatch == null) {
+                    // Create the match
+                    await supabase.from('matches').insert({
+                      'user1_id': userId,
+                      'user2_id': likerId,
+                      'created_at': DateTime.now().toIso8601String(),
+                      'user1_seen': true, // I'm seeing it now
+                      'user2_seen': false, // They haven't seen it yet
+                    });
+                    
+                    // Clean up likes/super_likes
+                    await supabase.from('likes').delete().or('and(liker_id.eq.$userId,liked_id.eq.$likerId),and(liker_id.eq.$likerId,liked_id.eq.$userId)');
+                    await supabase.from('super_likes').delete().or('and(liker_id.eq.$userId,liked_id.eq.$likerId),and(liker_id.eq.$likerId,liked_id.eq.$userId)');
+                    
+                    print('✅ Match created successfully');
                   }
+                  
+                  // Show match dialog instead of snackbar
+                  _showReciprocalInterestDialog(likerProfile);
+                  
+                  // Refresh interest cache
+                  _interestFutures.clear();
+                  
+                } else {
+                  // Not reciprocal - just show notification
+                  // Play notification sound (if enabled)
+                  if (_soundEnabled) {
+                    try {
+                      await _notificationPlayer.play(UrlSource('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3'));
+                    } catch (e) {
+                      print('⚠️ Could not play notification sound: $e');
+                    }
+                  }
+                  
+                  // Update notification count
+                  setState(() {
+                    _notificationCount++;
+                  });
+                  
+                  // Show a snackbar notification
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Row(
+                        children: [
+                          const Icon(Icons.favorite, color: Colors.white),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text('💖 ${likerProfile.name} gostou de você!'),
+                          ),
+                        ],
+                      ),
+                      backgroundColor: Colors.pinkAccent,
+                      duration: const Duration(seconds: 4),
+                      action: SnackBarAction(
+                        label: 'Ver',
+                        textColor: Colors.white,
+                        onPressed: () {
+                          setState(() => _selectedIndex = 1); // Go to interests tab
+                        },
+                      ),
+                    ),
+                  );
+                  
+                  // Refresh interest cache
+                  _interestFutures.clear();
                 }
-                
-                // Update notification count
-                setState(() {
-                  _notificationCount++;
-                });
-                
-                // Show a snackbar notification
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Row(
-                      children: [
-                        const Icon(Icons.favorite, color: Colors.white),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text('💖 ${likerProfile.name} gostou de você!'),
-                        ),
-                      ],
-                    ),
-                    backgroundColor: Colors.pinkAccent,
-                    duration: const Duration(seconds: 4),
-                    action: SnackBarAction(
-                      label: 'Ver',
-                      textColor: Colors.white,
-                      onPressed: () {
-                        setState(() => _selectedIndex = 1); // Go to interests tab
-                      },
-                    ),
-                  ),
-                );
-                
-                // Refresh interest cache
-                _interestFutures.clear();
               }
             } catch (e) {
               print('❌ ERROR handling real-time like: $e');
@@ -6013,7 +6068,6 @@ class MatchAnimationOverlay extends StatefulWidget {
 
 class _MatchAnimationOverlayState extends State<MatchAnimationOverlay> with TickerProviderStateMixin {
   late AnimationController _heartController;
-  late ConfettiController _confettiController;
   final List<Widget> _hearts = [];
 
   @override
@@ -6024,12 +6078,6 @@ class _MatchAnimationOverlayState extends State<MatchAnimationOverlay> with Tick
       duration: const Duration(seconds: 2),
     )..repeat();
     
-    // Initialize confetti controller
-    _confettiController = ConfettiController(duration: const Duration(seconds: 3));
-    
-    // Start confetti immediately
-    _confettiController.play();
-    
     // Generate floating hearts
     for (int i = 0; i < 15; i++) {
       _hearts.add(_buildFloatingHeart());
@@ -6039,7 +6087,6 @@ class _MatchAnimationOverlayState extends State<MatchAnimationOverlay> with Tick
   @override
   void dispose() {
     _heartController.dispose();
-    _confettiController.dispose();
     super.dispose();
   }
 
@@ -6072,27 +6119,6 @@ class _MatchAnimationOverlayState extends State<MatchAnimationOverlay> with Tick
   Widget build(BuildContext context) {
     return Stack(
       children: [
-        // Confetti from top center
-        Align(
-          alignment: Alignment.topCenter,
-          child: ConfettiWidget(
-            confettiController: _confettiController,
-            blastDirection: 1.57, // radians - down
-            emissionFrequency: 0.05,
-            numberOfParticles: 50,
-            maxBlastForce: 100,
-            minBlastForce: 80,
-            gravity: 0.3,
-            colors: const [
-              Colors.pinkAccent,
-              Colors.purpleAccent,
-              Color(0xFFFFD700), // Gold
-              Colors.redAccent,
-              Colors.pink,
-              Color(0xFFFF1493), // Deep pink
-            ],
-          ),
-        ),
         // Main Content
         Column(
           mainAxisAlignment: MainAxisAlignment.center,
