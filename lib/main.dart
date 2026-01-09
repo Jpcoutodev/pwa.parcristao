@@ -7,10 +7,12 @@ import 'package:novo_app/edit_profile_screen.dart'; // Import da tela de ediçã
 import 'package:novo_app/temp_profile_detail.dart'; // Import Profile Detail
 import 'package:novo_app/chat_screen.dart'; // Import Chat Screen
 import 'package:novo_app/verification_screen.dart'; // Import Verification Screen
+import 'package:novo_app/banned_screen.dart'; // Import Banned Screen
 import 'package:geolocator/geolocator.dart';
 import 'package:audioplayers/audioplayers.dart'; // For notification sounds
 
 import 'package:flutter/services.dart'; // Importante para controlar orientação
+import 'package:shared_preferences/shared_preferences.dart'; // Persistência de configurações
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -61,7 +63,7 @@ class _StartupScreenState extends State<StartupScreen> {
       final userId = session.user.id;
       final data = await Supabase.instance.client
           .from('profiles')
-          .select('name, image_urls')
+          .select('name, image_urls, is_banned')
           .eq('id', userId)
           .maybeSingle();
 
@@ -77,6 +79,17 @@ class _StartupScreenState extends State<StartupScreen> {
 
       final name = data['name'] as String?;
       final imageUrls = (data['image_urls'] as List<dynamic>?)?.cast<String>() ?? [];
+      final isBanned = data['is_banned'] as bool? ?? false;
+
+      // Check if user is banned - redirect to banned screen
+      if (isBanned) {
+        if (mounted) {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const BannedScreen()),
+          );
+        }
+        return;
+      }
 
       // Check if profile is incomplete (missing name or photos)
       if (name == null || name.isEmpty || imageUrls.isEmpty) {
@@ -323,6 +336,22 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _fetchNotificationCount();
     _checkMissedMatches();
     _subscribeToMatches(); // Subscribe to real-time match updates
+    _loadSettings(); // Load persisted settings
+  }
+
+  Future<void> _loadSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (mounted) {
+      setState(() {
+        _soundEnabled = prefs.getBool('sound_enabled') ?? true;
+        _hapticEnabled = prefs.getBool('haptic_enabled') ?? true;
+      });
+    }
+  }
+
+  Future<void> _saveSetting(String key, bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(key, value);
   }
 
   Future<void> _checkMissedMatches() async {
@@ -1025,6 +1054,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final status = _getSwipeStatus();
     
     if (status != SwipeStatus.none) {
+      // Haptic feedback for swipe actions
+      if (_hapticEnabled) {
+        if (status == SwipeStatus.like) {
+          HapticFeedback.lightImpact();
+        } else if (status == SwipeStatus.dislike) {
+          HapticFeedback.selectionClick();
+        } else if (status == SwipeStatus.superLike) {
+          HapticFeedback.mediumImpact();
+        }
+      }
+
       if (profiles.isNotEmpty) {
         final currentProfile = profiles.last;
         if (status == SwipeStatus.like) {
@@ -4171,6 +4211,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           activeColor: const Color(0xFF667eea),
                           onChanged: (value) {
                             setState(() => _soundEnabled = value);
+                            _saveSetting('sound_enabled', value);
                           },
                         ),
                       ],
@@ -4228,6 +4269,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           activeColor: const Color(0xFF667eea),
                           onChanged: (value) {
                             setState(() => _hapticEnabled = value);
+                            _saveSetting('haptic_enabled', value);
                           },
                         ),
                       ],
