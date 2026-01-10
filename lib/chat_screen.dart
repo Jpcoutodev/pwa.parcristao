@@ -180,8 +180,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     try {
       final supabase = Supabase.instance.client;
-      // Optimistic UI Update (optional, but Realtime is fast enough generally)
-      // For now relying on Realtime to add it to the list
+      // Optimistic UI Update isn't needed as Realtime is fast enough
       
       await supabase.from('messages').insert({
         'match_id': widget.matchId,
@@ -190,11 +189,14 @@ class _ChatScreenState extends State<ChatScreen> {
       });
     } catch (e) {
       print('Erro ao enviar mensagem: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Erro ao enviar mensagem: $e')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erro ao enviar mensagem: $e')),
+        );
+      }
     }
   }
+
 
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {

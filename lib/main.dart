@@ -1003,10 +1003,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       });
     }
     
-    // Se clicar na aba de Chat (index 2), atualiza o contador de mensagens
+    // Se clicar na aba de Chat (index 2), atualiza a lista de conversas
     if (index == 2) {
-      // Atualiza a lista de conversas e zera o contador quando visualizar
-      _refreshInterestTab('mutuos');
+      _refreshInterestTab('mutuos'); // Atualiza a lista de conversas
+      // NÃO marcar como lidas aqui - apenas ao abrir a conversa individual
     }
     
     setState(() {
@@ -1038,6 +1038,26 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       print('✅ Likes/Super Likes marcados como vistos');
     } catch (e) {
       print('❌ Erro ao marcar interesses como vistos: $e');
+    }
+  }
+
+  /// Marca todas as mensagens recebidas como lidas no banco de dados
+  Future<void> _markMessagesAsRead() async {
+    try {
+      final supabase = Supabase.instance.client;
+      final userId = supabase.auth.currentUser?.id;
+      if (userId == null) return;
+
+      // Marcar mensagens recebidas (não enviadas por mim) como lidas
+      await supabase
+          .from('messages')
+          .update({'read': true})
+          .neq('sender_id', userId)
+          .eq('read', false);
+      
+      print('✅ Mensagens marcadas como lidas');
+    } catch (e) {
+      print('❌ Erro ao marcar mensagens como lidas: $e');
     }
   }
 
@@ -1499,15 +1519,26 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
   }
 
-  void _showReciprocalInterestDialog(Profile targetProfile) {
+  void _showReciprocalInterestDialog(Profile targetProfile) async {
     // Haptic feedback for match (medium impact)
     if (_hapticEnabled) HapticFeedback.mediumImpact();
     
     // Play match sound
     _playMatchSound();
     
+    // Save context before async operation
+    final dialogContext = context;
+    
+    // Fetch current user profile for the animation
+    final myProfile = await _getMyProfile();
+    
+    if (!mounted || myProfile == null) return;
+    
+    // Use saved context to avoid issues with async
+    if (!dialogContext.mounted) return;
+    
     showGeneralDialog(
-      context: context,
+      context: dialogContext,
       barrierDismissible: true,
       barrierLabel: 'Fechar',
       barrierColor: Colors.black.withOpacity(0.8), // Dark background focus
@@ -1518,16 +1549,17 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             color: Colors.transparent,
             child: MatchAnimationOverlay(
               targetProfile: targetProfile,
+              myProfile: myProfile,
               onViewProfile: () {
-                Navigator.pop(context); // Close dialog
+                Navigator.pop(dialogContext); // Close dialog
                 Navigator.push(
-                  context,
+                  dialogContext,
                   MaterialPageRoute(
                     builder: (context) => ProfileDetailScreen(profile: targetProfile),
                   ),
                 );
               },
-              onContinue: () => Navigator.pop(context),
+              onContinue: () => Navigator.pop(dialogContext),
             ),
           ),
         );
@@ -1891,38 +1923,40 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
   
   Future<void> _deleteMatch(String matchId, String status) async {
+    // 1. Mostrar Loading
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator(color: Colors.white)),
+    );
+
     try {
       final supabase = Supabase.instance.client;
-      final userId = supabase.auth.currentUser?.id;
+      
+      // Chamada RPC segura que executa como admin no banco
+      await supabase.rpc('delete_match_completely', params: {'match_id_input': matchId});
+      
+      print('✅ Match $matchId removido via RPC.');
+      
+      // 2. Fechar Loading
+      if (mounted) Navigator.pop(context);
 
-      // Fetch match data to get both user IDs before deleting
-      final matchData = await supabase
-          .from('matches')
-          .select('user1_id, user2_id')
-          .eq('id', matchId)
-          .maybeSingle();
-
-      // Delete the match
-      await supabase.from('matches').delete().eq('id', matchId);
-
-      // Add mutual passes so they don't see each other again
-      if (matchData != null && userId != null) {
-        final otherUserId = matchData['user1_id'] == userId
-            ? matchData['user2_id']
-            : matchData['user1_id'];
-
-        await supabase.from('passes').upsert({'user_id': userId, 'passed_id': otherUserId});
-        await supabase.from('passes').upsert({'user_id': otherUserId, 'passed_id': userId});
-      }
-
+      // 3. Atualizar UI
       await _refreshInterestTab(status);
+      
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Match removido'), backgroundColor: Colors.orange),
+          const SnackBar(content: Text('Match desfeito com sucesso.'), backgroundColor: Colors.orange),
         );
       }
     } catch (e) {
-      print('Erro ao excluir match: $e');
+      if (mounted) Navigator.pop(context); // Fecha loading em caso de erro
+      print('Erro ao excluir match (RPC): $e');
+      if (mounted) {
+         ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erro ao excluir: $e'), backgroundColor: Colors.red),
+        );
+      }
     }
   }
   
@@ -2142,7 +2176,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         final data = await supabase
             .from('matches')
             .select('id, user1_id, user2_id, p1:profiles!matches_user1_id_fkey(*), p2:profiles!matches_user2_id_fkey(*), messages:messages(content, created_at, sender_id, read)')
-            .or('user1_id.eq.$userId,user2_id.eq.$userId');
+            .or('user1_id.eq.$userId,user2_id.eq.$userId')
+            .order('created_at', referencedTable: 'messages', ascending: false);
         
         for (var item in data) {
           final profileData = item['user1_id'] == userId ? item['p2'] : item['p1'];
@@ -6096,12 +6131,14 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
 // --- Match Animation Overlay Widget ---
 class MatchAnimationOverlay extends StatefulWidget {
   final Profile targetProfile;
+  final Profile myProfile;
   final VoidCallback onViewProfile;
   final VoidCallback onContinue;
 
   const MatchAnimationOverlay({
     super.key,
     required this.targetProfile,
+    required this.myProfile,
     required this.onViewProfile,
     required this.onContinue,
   });
@@ -6182,8 +6219,10 @@ class _MatchAnimationOverlayState extends State<MatchAnimationOverlay> with Tick
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                // You (Placeholder - In real app, load current user image)
-                _buildAvatar('https://via.placeholder.com/150'), // Replace with actual user image
+                // You (Real user image)
+                _buildAvatar(widget.myProfile.imageUrls.isNotEmpty 
+                    ? widget.myProfile.imageUrls.first 
+                    : 'https://via.placeholder.com/150'),
                
                 const SizedBox(width: 20),
                 const Icon(Icons.favorite, color: Colors.white, size: 40),
