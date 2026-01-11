@@ -155,7 +155,7 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
       await supabase.auth.signInWithOAuth(
         OAuthProvider.google,
         redirectTo: kIsWeb 
-            ? 'https://pettfehkjvndxcoxalqm.supabase.co/auth/v1/callback' 
+            ? 'https://app.parcristao.app/' 
             : 'app.parcristao://login-callback',
       );
       

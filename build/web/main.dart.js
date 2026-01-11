@@ -106292,7 +106292,7 @@ k=$.bV().b
 k===$&&A.a()
 m=k
 s=6
-return A.h(A.Sh(m.gbV(),B.XU,"https://pettfehkjvndxcoxalqm.supabase.co/auth/v1/callback"),$async$EC)
+return A.h(A.Sh(m.gbV(),B.XU,"https://app.parcristao.app/"),$async$EC)
 case 6:o.push(5)
 s=4
 break
