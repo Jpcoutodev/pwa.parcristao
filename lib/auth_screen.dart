@@ -633,10 +633,11 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                                             letterSpacing: 1,
                                           ),
                                         ),
+                                      ),
                                 ),
-                            ],
+                              ],
+                            ),
                           ),
-                        ),
 
                         const SizedBox(height: 30),
                         
