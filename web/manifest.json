@@ -1,13 +1,17 @@
 {
-    "name": "Par Cristão",
+    "name": "Par Cristão - Namoro e Amizade Cristã",
     "short_name": "Par Cristão",
-    "start_url": ".",
+    "start_url": "/",
+    "scope": "/",
     "display": "standalone",
     "background_color": "#764ba2",
     "theme_color": "#667eea",
-    "description": "Encontre seu par cristão. Namoro e amizade com propósito.",
+    "description": "Encontre seu par cristão. Namoro e amizade com propósito. Conecte-se com pessoas que compartilham sua fé e valores cristãos.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
+    "lang": "pt-BR",
+    "dir": "ltr",
+    "categories": ["social", "lifestyle"],
     "icons": [
         {
             "src": "icons/Icon-192.png",

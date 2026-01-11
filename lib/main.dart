@@ -1,29 +1,32 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart'; // For kIsWeb
 import 'package:novo_app/onboarding_screen.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:novo_app/supabase_config.dart';
 import 'package:novo_app/auth_screen.dart';
-import 'package:novo_app/edit_profile_screen.dart'; // Import da tela de edição
-import 'package:novo_app/temp_profile_detail.dart'; // Import Profile Detail
-import 'package:novo_app/chat_screen.dart'; // Import Chat Screen
-import 'package:novo_app/verification_screen.dart'; // Import Verification Screen
-import 'package:novo_app/banned_screen.dart'; // Import Banned Screen
+import 'package:novo_app/edit_profile_screen.dart';
+import 'package:novo_app/temp_profile_detail.dart';
+import 'package:novo_app/chat_screen.dart';
+import 'package:novo_app/verification_screen.dart';
+import 'package:novo_app/banned_screen.dart';
+import 'package:novo_app/platform_utils.dart'; // Platform utilities
 import 'package:geolocator/geolocator.dart';
-import 'package:audioplayers/audioplayers.dart'; // For notification sounds
+import 'package:just_audio/just_audio.dart'; // Better web support
 
-import 'package:flutter/services.dart'; // Importante para controlar orientação
-import 'package:shared_preferences/shared_preferences.dart'; // Persistência de configurações
-import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Bloqueia a orientação apenas para retrato (vertical)
-  await SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-    DeviceOrientation.portraitDown, // Opcional, se quiser permitir de cabeça para baixo
-  ]);
+  // Bloqueia a orientação apenas para retrato (vertical) - apenas em plataformas nativas
+  if (!kIsWeb) {
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+    ]);
+  }
 
   await Supabase.initialize(
     url: SupabaseConfig.url,
@@ -609,7 +612,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   // Play notification sound (if enabled)
                   if (_soundEnabled) {
                     try {
-                      await _notificationPlayer.play(UrlSource('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3'));
+                      await _notificationPlayer.setUrl('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
+                      await _notificationPlayer.play();
                     } catch (e) {
                       print('⚠️ Could not play notification sound: $e');
                     }
@@ -697,7 +701,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 // Play a more prominent notification sound for super likes (if enabled)
                 if (_soundEnabled) {
                   try {
-                    await _notificationPlayer.play(UrlSource('https://assets.mixkit.co/active_storage/sfx/2867/2867-preview.mp3'));
+                    await _notificationPlayer.setUrl('https://assets.mixkit.co/active_storage/sfx/2867/2867-preview.mp3');
+                    await _notificationPlayer.play();
                   } catch (e) {
                     print('⚠️ Could not play notification sound: $e');
                   }
@@ -767,7 +772,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             // Only increment counter if message is from someone else
             if (senderId != userId && mounted) {
               // Haptic feedback for new message
-              if (_hapticEnabled) HapticFeedback.lightImpact();
+              if (_hapticEnabled) PlatformUtils.hapticLight();
               
               setState(() {
                 _messagesNotificationCount++;
@@ -776,7 +781,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               // Play notification sound (if enabled)
               if (_soundEnabled) {
                 try {
-                  await _notificationPlayer.play(UrlSource('https://assets.mixkit.co/active_storage/sfx/2354/2354-preview.mp3'));
+                  await _notificationPlayer.setUrl('https://assets.mixkit.co/active_storage/sfx/2354/2354-preview.mp3');
+                  await _notificationPlayer.play();
                 } catch (e) {
                   print('⚠️ Could not play message notification sound: $e');
                 }
@@ -1080,12 +1086,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       // Haptic feedback for swipe actions
       if (_hapticEnabled) {
         if (status == SwipeStatus.like) {
-          HapticFeedback.lightImpact();
+          PlatformUtils.hapticLight();
         } else if (status == SwipeStatus.dislike) {
-          // Changed to lightImpact to match Like button feel (selectionClick was too weak)
-          HapticFeedback.lightImpact();
+          PlatformUtils.hapticLight();
         } else if (status == SwipeStatus.superLike) {
-          HapticFeedback.mediumImpact();
+          PlatformUtils.hapticMedium();
         }
       }
 
@@ -1266,7 +1271,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final currentProfile = profiles.last; // Swiping the TOP card
     
     // Haptic feedback for like action
-    if (_hapticEnabled) HapticFeedback.lightImpact();
+    if (_hapticEnabled) PlatformUtils.hapticLight();
     
     setState(() {
       _position = const Offset(150, 0);
@@ -1281,7 +1286,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final currentProfile = profiles.last;
     
     // Haptic feedback for dislike action (now same as like)
-    if (_hapticEnabled) HapticFeedback.lightImpact();
+    if (_hapticEnabled) PlatformUtils.hapticLight();
     
     setState(() {
       _position = const Offset(-150, 0);
@@ -1313,7 +1318,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final currentProfile = profiles.last;
     
     // Haptic feedback for super like (stronger)
-    if (_hapticEnabled) HapticFeedback.mediumImpact();
+    if (_hapticEnabled) PlatformUtils.hapticMedium();
     
     setState(() {
       _position = const Offset(0, -150);
@@ -1497,7 +1502,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       // Play a very subtle swoosh sound
       // Using lower volume for swipe (0.3 = 30% volume)
       await _notificationPlayer.setVolume(0.3);
-      await _notificationPlayer.play(AssetSource('sounds/swipe.wav'));
+      await _notificationPlayer.setAsset('assets/sounds/swipe.wav');
+      await _notificationPlayer.play();
       // Reset volume for other sounds
       await _notificationPlayer.setVolume(1.0);
     } catch (e) {
@@ -1510,18 +1516,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     if (!_soundEnabled) return;
     
     try {
-      // Play a simple notification sound
-      // You can replace this with a custom sound file later
-      await _notificationPlayer.play(AssetSource('sounds/notification.wav'));
+      await _notificationPlayer.setAsset('assets/sounds/notification.wav');
+      await _notificationPlayer.play();
     } catch (e) {
-      print('Error playing match sound: $e');
-      // Fail silently - sound is not critical
+      // Fail silently
     }
   }
 
   void _showReciprocalInterestDialog(Profile targetProfile) async {
     // Haptic feedback for match (medium impact)
-    if (_hapticEnabled) HapticFeedback.mediumImpact();
+    if (_hapticEnabled) PlatformUtils.hapticMedium();
     
     // Play match sound
     _playMatchSound();

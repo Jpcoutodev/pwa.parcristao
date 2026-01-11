@@ -1,0 +1,43 @@
+# Código fonte Flutter
+lib/
+test/
+.dart_tool/
+.packages
+
+# Builds nativos (não necessários para web)
+android/
+ios/
+linux/
+macos/
+windows/
+
+# Arquivos de desenvolvimento
+.idea/
+.vscode/
+*.iml
+.metadata
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Logs e temporários
+*.log
+*.txt
+build_error*.log
+analysis*.txt
+doctor.txt
+flutter_*.log
+
+# Git
+.git/
+.gitignore
+.github/
+
+# Documentação
+README.md
+
+# Outros arquivos desnecessários
+pubspec.lock
+analysis_options.yaml
+
+# Manter apenas o build web
+!build/web/
