@@ -1,5 +1,8 @@
 {
   "version": 2,
+  "buildCommand": "echo 'Using pre-built files from build/web'",
+  "installCommand": "echo 'No dependencies to install'",
+  "outputDirectory": "build/web",
   "public": true,
   "cleanUrls": true,
   "rewrites": [
