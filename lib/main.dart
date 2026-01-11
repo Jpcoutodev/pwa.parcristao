@@ -154,6 +154,14 @@ class ParCristaoApp extends StatelessWidget {
         scaffoldBackgroundColor: const Color(0xFFF5F5F5),
       ),
       home: const StartupScreen(),
+      builder: (context, child) {
+        return Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 500),
+            child: child!,
+          ),
+        );
+      },
     );
   }
 }
