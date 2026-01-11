@@ -383,41 +383,50 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      resizeToAvoidBottomInset: true, // Properly resize when keyboard appears
-      body: Stack(
-        children: [
-          // Background Gradient
-          Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [Color(0xFF667eea), Color(0xFF764ba2)],
-                stops: [0.0, 1.0],
+    // Calculate real height ignoring keyboard
+    final mediaQuery = MediaQuery.of(context);
+    final realHeight = mediaQuery.size.height + mediaQuery.viewInsets.bottom;
+    
+    return GestureDetector(
+      onTap: () {
+        // Force unfocus when tapping outside - PWA keyboard hack
+        FocusManager.instance.primaryFocus?.unfocus();
+      },
+      child: Scaffold(
+        resizeToAvoidBottomInset: true, // Properly resize when keyboard appears
+        body: Stack(
+          children: [
+            // Background Gradient
+            Container(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFF667eea), Color(0xFF764ba2)],
+                  stops: [0.0, 1.0],
+                ),
               ),
             ),
-          ),
-          
-          // Decorative Elements (Bubbles)
-          IgnorePointer(
-            child: Stack(
-              children: [
-                Positioned(
-                  top: -50,
-                  left: -50,
-                  child: _buildGlassBubble(200, opacity: 0.1),
-                ),
-                Positioned(
-                  bottom: -80,
-                  right: -20,
-                  child: _buildGlassBubble(250, opacity: 0.08),
-                ),
-              ],
+            
+            // Decorative Elements (Bubbles)
+            IgnorePointer(
+              child: Stack(
+                children: [
+                  Positioned(
+                    top: -50,
+                    left: -50,
+                    child: _buildGlassBubble(200, opacity: 0.1),
+                  ),
+                  Positioned(
+                    bottom: -80,
+                    right: -20,
+                    child: _buildGlassBubble(250, opacity: 0.08),
+                  ),
+                ],
+              ),
             ),
-          ),
 
-          SafeArea(
+            SafeArea(
             child: Center(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.all(24),
@@ -674,10 +683,11 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                     ),
                   ),
                 ),
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
