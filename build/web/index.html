@@ -20,7 +20,7 @@
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
   <meta name="viewport"
-    content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, interactive-widget=resizes-content">
+    content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, interactive-widget=overlays-content">
   <meta name="description"
     content="Encontre seu par cristão. Namoro e amizade com propósito. Conecte-se com pessoas que compartilham sua fé e valores cristãos.">
 
@@ -72,21 +72,43 @@
 
   <script>
     // The value below is injected by flutter build, do not touch.
-    const serviceWorkerVersion = "3587951183";
+    const serviceWorkerVersion = "3104347484";
 
-    // Fix for mobile keyboard resize issue
+    // Enhanced fix for mobile keyboard resize issue
     var lastHeight = window.innerHeight;
-    window.addEventListener('resize', function () {
-      // When keyboard closes, height increases - force a repaint
-      if (window.innerHeight > lastHeight) {
-        document.body.style.height = window.innerHeight + 'px';
-        setTimeout(function () {
-          document.body.style.height = '100%';
-          window.scrollTo(0, 0);
-        }, 50);
-      }
-      lastHeight = window.innerHeight;
-    });
+    var resizeTimeout;
+
+    function handleResize() {
+      clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(function () {
+        var currentHeight = window.innerHeight;
+
+        // When keyboard closes, height increases - force a repaint
+        if (currentHeight > lastHeight) {
+          // Force body to recalculate
+          document.body.style.minHeight = currentHeight + 'px';
+
+          // Reset after a short delay to allow proper reflow
+          setTimeout(function () {
+            document.body.style.minHeight = '100vh';
+            document.body.style.minHeight = '100dvh';
+            window.scrollTo(0, 0);
+
+            // Force repaint
+            document.body.offsetHeight;
+          }, 100);
+        }
+
+        lastHeight = currentHeight;
+      }, 50);
+    }
+
+    window.addEventListener('resize', handleResize);
+
+    // Also listen to visualViewport for better handling on modern browsers
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', handleResize);
+    }
   </script>
   <!-- This script adds the flutter initialization JS code -->
   <script src="flutter.js" defer=""></script>
