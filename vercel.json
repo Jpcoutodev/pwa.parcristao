@@ -1,7 +1,6 @@
 {
   "version": 2,
-  "buildCommand": "flutter build web --release --web-renderer canvaskit",
-  "outputDirectory": "build/web",
+  "cleanUrls": true,
   "rewrites": [
     {
       "source": "/(.*)",
