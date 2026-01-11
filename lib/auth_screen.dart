@@ -147,27 +147,7 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
     }
   }
 
-  Future<void> _signInWithGoogle() async {
-    try {
-      setState(() => _isLoading = true);
-      
-      final supabase = Supabase.instance.client;
-      await supabase.auth.signInWithOAuth(
-        OAuthProvider.google,
-        redirectTo: kIsWeb 
-            ? 'https://app.parcristao.app/' 
-            : 'app.parcristao://login-callback',
-      );
-      
-      // O redirecionamento acontece automaticamente
-      // Quando voltar, o listener de auth vai pegar
-    } catch (e) {
-      print('Erro no login com Google: $e');
-      _showError('Erro ao entrar com Google: $e');
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
-    }
-  }
+
 
   void _showError(String message) {
     if (!mounted) return;
@@ -404,6 +384,7 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      resizeToAvoidBottomInset: true, // Properly resize when keyboard appears
       body: Stack(
         children: [
           // Background Gradient
@@ -442,69 +423,71 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                 padding: const EdgeInsets.all(24),
                 child: FadeTransition(
                   opacity: _fadeAnimation,
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      // Logo
-                      Container(
-                        margin: const EdgeInsets.only(bottom: 30),
-                        width: 140,
-                        height: 140,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Colors.white,
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.15),
-                              blurRadius: 15,
-                              offset: const Offset(0, 5),
-                            )
-                          ],
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 500), // Limit width on desktop
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        // Logo
+                        Container(
+                          margin: const EdgeInsets.only(bottom: 30),
+                          width: 140,
+                          height: 140,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.white,
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.15),
+                                blurRadius: 15,
+                                offset: const Offset(0, 5),
+                              )
+                            ],
+                          ),
+                          padding: const EdgeInsets.all(20),
+                          child: Image.asset(
+                            'assets/images/login_logo.png',
+                            fit: BoxFit.contain,
+                          ),
                         ),
-                        padding: const EdgeInsets.all(20),
-                        child: Image.asset(
-                          'assets/images/login_logo.png',
-                          fit: BoxFit.contain,
+                        const SizedBox(height: 24),
+                        Text(
+                          _isLogin ? 'Bem-vindo de volta!' : 'Criar Nova Conta',
+                          style: const TextStyle(
+                            fontSize: 28,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                            letterSpacing: 1,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 24),
-                      Text(
-                        _isLogin ? 'Bem-vindo de volta!' : 'Criar Nova Conta',
-                        style: const TextStyle(
-                          fontSize: 28,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                          letterSpacing: 1,
+                        const SizedBox(height: 8),
+                        Text(
+                          _isLogin
+                              ? 'Entre para continuar sua jornada'
+                              : 'Comece sua história de amor hoje',
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: Colors.white.withOpacity(0.9),
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        _isLogin
-                            ? 'Entre para continuar sua jornada'
-                            : 'Comece sua história de amor hoje',
-                        style: TextStyle(
-                          fontSize: 16,
-                          color: Colors.white.withOpacity(0.9),
-                        ),
-                      ),
-                      const SizedBox(height: 40),
+                        const SizedBox(height: 40),
 
-                      // Form Card
-                      Container(
-                        padding: const EdgeInsets.all(30),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(30),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.2),
-                              blurRadius: 30,
-                              offset: const Offset(0, 15),
-                            ),
-                          ],
-                        ),
-                        child: Column(
-                          children: [
+                        // Form Card
+                        Container(
+                          padding: const EdgeInsets.all(30),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(30),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.2),
+                                blurRadius: 30,
+                                offset: const Offset(0, 15),
+                              ),
+                            ],
+                          ),
+                          child: Column(
+                            children: [
                             _buildTextField(
                               controller: _emailController,
                               label: 'E-mail',
@@ -619,116 +602,66 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                                   ),
                                 ],
                               ),
-                            ],
-                            
-                            const SizedBox(height: 30),
-                            
-                            SizedBox(
-                              width: double.infinity,
-                              height: 55,
-                              child: ElevatedButton(
-                                onPressed: () {
-                                  print('ElevatedButton onPressed chamado!');
-                                  if (!_isLoading) _submit();
-                                },
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFF667eea),
-                                  foregroundColor: Colors.white,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(16),
+                              ],
+                              
+                              const SizedBox(height: 30),
+                              
+                              SizedBox(
+                                width: double.infinity,
+                                height: 55,
+                                child: ElevatedButton(
+                                  onPressed: () {
+                                    print('ElevatedButton onPressed chamado!');
+                                    if (!_isLoading) _submit();
+                                  },
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFF667eea),
+                                    foregroundColor: Colors.white,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(16),
+                                    ),
+                                    elevation: 5,
+                                    shadowColor: const Color(0xFF667eea).withOpacity(0.5),
                                   ),
-                                  elevation: 5,
-                                  shadowColor: const Color(0xFF667eea).withOpacity(0.5),
-                                ),
-                                child: _isLoading
-                                    ? const CircularProgressIndicator(color: Colors.white)
-                                    : Text(
-                                        _isLogin ? 'ENTRAR' : 'CADASTRAR',
-                                        style: const TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.bold,
-                                          letterSpacing: 1,
+                                  child: _isLoading
+                                      ? const CircularProgressIndicator(color: Colors.white)
+                                      : Text(
+                                          _isLogin ? 'ENTRAR' : 'CADASTRAR',
+                                          style: const TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.bold,
+                                            letterSpacing: 1,
+                                          ),
                                         ),
-                                      ),
-                              ),
-                            ),
-                            
-                            // Divider "ou"
-                            Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 20),
-                              child: Row(
-                                children: [
-                                  Expanded(child: Divider(color: Colors.grey[300])),
-                                  Padding(
-                                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                                    child: Text(
-                                      'ou',
-                                      style: TextStyle(
-                                        color: Colors.grey[500],
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                  ),
-                                  Expanded(child: Divider(color: Colors.grey[300])),
-                                ],
-                              ),
-                            ),
-                            
-                            // Link Google (discreto)
-                            Center(
-                              child: TextButton(
-                                onPressed: _isLoading ? null : _signInWithGoogle,
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Image.network(
-                                      'https://www.google.com/favicon.ico',
-                                      height: 16,
-                                      width: 16,
-                                      errorBuilder: (ctx, err, stack) => Icon(Icons.g_mobiledata, size: 18, color: Colors.grey[500]),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      _isLogin ? 'Entrar com Google' : 'Cadastrar com Google',
-                                      style: TextStyle(
-                                        color: Colors.grey[500],
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                  ],
                                 ),
-                              ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ),
 
-                      const SizedBox(height: 30),
-                      
-                      // Toggle Login/Signup
-                      TextButton(
-                        onPressed: () {
-                          setState(() {
-                            _isLogin = !_isLogin;
-                            _animationController.reset();
-                            _animationController.forward();
-                          });
-                        },
-                        child: RichText(
-                          text: TextSpan(
-                            text: _isLogin ? 'Não tem uma conta? ' : 'Já tem uma conta? ',
-                            style: TextStyle(
-                              color: Colors.white.withOpacity(0.9),
-                              fontSize: 16,
-                            ),
-                            children: [
-                              TextSpan(
-                                text: _isLogin ? 'Cadastre-se' : 'Entrar',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white,
+                        const SizedBox(height: 30),
+                        
+                        // Toggle Login/Signup
+                        TextButton(
+                          onPressed: () {
+                            setState(() {
+                              _isLogin = !_isLogin;
+                              _animationController.reset();
+                              _animationController.forward();
+                            });
+                          },
+                          child: RichText(
+                            text: TextSpan(
+                              text: _isLogin ? 'Não tem uma conta? ' : 'Já tem uma conta? ',
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.9),
+                                fontSize: 16,
+                              ),
+                              children: [
+                                TextSpan(
+                                  text: _isLogin ? 'Cadastre-se' : 'Entrar',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white,
                                   decoration: TextDecoration.underline,
                                 ),
                               ),
@@ -736,7 +669,8 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                           ),
                         ),
                       ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),

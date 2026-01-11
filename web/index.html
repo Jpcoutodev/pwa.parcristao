@@ -20,7 +20,7 @@
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
   <meta name="viewport"
-    content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, interactive-widget=overlays-content">
+    content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, interactive-widget=resizes-content">
   <meta name="description"
     content="Encontre seu par cristão. Namoro e amizade com propósito. Conecte-se com pessoas que compartilham sua fé e valores cristãos.">
 
@@ -57,16 +57,32 @@
 
   <!-- CSS Fix for mobile keyboard resize -->
   <style>
-    html,
+    html {
+      height: 100%;
+      height: 100dvh;
+      /* Dynamic viewport height */
+      margin: 0;
+      padding: 0;
+    }
+
     body {
       height: 100%;
       min-height: 100%;
-      min-height: 100vh;
       min-height: 100dvh;
       /* Dynamic viewport height - works best for mobile */
       margin: 0;
       padding: 0;
       overflow: hidden;
+      position: relative;
+    }
+
+    /* Mobile-specific fixes */
+    @supports (-webkit-touch-callout: none) {
+
+      /* iOS Safari */
+      body {
+        min-height: -webkit-fill-available;
+      }
     }
   </style>
 
@@ -77,6 +93,28 @@
     // Enhanced fix for mobile keyboard resize issue
     var lastHeight = window.innerHeight;
     var resizeTimeout;
+    var isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
+    function forceViewportReset() {
+      // Multiple strategies to force proper viewport reset
+      document.documentElement.style.height = '100%';
+      document.body.style.height = '100%';
+
+      // Trigger reflow
+      void document.body.offsetHeight;
+
+      // Reset to dynamic viewport height
+      document.documentElement.style.height = '100dvh';
+      document.body.style.minHeight = '100dvh';
+
+      // Force scroll to trigger repaint (mobile trick)
+      if (isMobile) {
+        window.scrollTo(0, 1);
+        setTimeout(function () {
+          window.scrollTo(0, 0);
+        }, 10);
+      }
+    }
 
     function handleResize() {
       clearTimeout(resizeTimeout);
@@ -85,30 +123,34 @@
 
         // When keyboard closes, height increases - force a repaint
         if (currentHeight > lastHeight) {
-          // Force body to recalculate
-          document.body.style.minHeight = currentHeight + 'px';
-
-          // Reset after a short delay to allow proper reflow
-          setTimeout(function () {
-            document.body.style.minHeight = '100vh';
-            document.body.style.minHeight = '100dvh';
-            window.scrollTo(0, 0);
-
-            // Force repaint
-            document.body.offsetHeight;
-          }, 100);
+          console.log('Keyboard closed - resetting viewport');
+          forceViewportReset();
         }
 
         lastHeight = currentHeight;
-      }, 50);
+      }, 100);
     }
 
+    // Listen to window resize
     window.addEventListener('resize', handleResize);
 
     // Also listen to visualViewport for better handling on modern browsers
     if (window.visualViewport) {
       window.visualViewport.addEventListener('resize', handleResize);
+      window.visualViewport.addEventListener('scroll', function () {
+        // Reset on scroll (helps with keyboard dismiss)
+        if (window.visualViewport.height > lastHeight) {
+          forceViewportReset();
+        }
+      });
     }
+
+    // Listen to focus events as additional trigger
+    document.addEventListener('focusout', function () {
+      if (isMobile) {
+        setTimeout(forceViewportReset, 300);
+      }
+    });
   </script>
   <!-- This script adds the flutter initialization JS code -->
   <script src="flutter.js" defer=""></script>
@@ -180,7 +222,7 @@
       document.body.style.background = "transparent";
     }
   </script>
-  <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" name="viewport">
+
 </head>
 
 <body>
