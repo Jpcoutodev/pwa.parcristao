@@ -393,7 +393,7 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
         FocusManager.instance.primaryFocus?.unfocus();
       },
       child: Scaffold(
-        resizeToAvoidBottomInset: true, // Properly resize when keyboard appears
+        resizeToAvoidBottomInset: false, // Don't let Scaffold mess with layout on Web
         body: Stack(
           children: [
             // Background Gradient

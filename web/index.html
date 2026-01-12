@@ -90,67 +90,29 @@
     // The value below is injected by flutter build, do not touch.
     var serviceWorkerVersion = null;
 
-    // Enhanced fix for mobile keyboard resize issue
-    var lastHeight = window.innerHeight;
-    var resizeTimeout;
-    var isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    // Production-ready fix for mobile keyboard resize issue
+    let lastHeight = window.innerHeight;
 
-    function forceViewportReset() {
-      // Multiple strategies to force proper viewport reset
-      document.documentElement.style.height = '100%';
-      document.body.style.height = '100%';
+    function forceResize() {
+      const currentHeight = window.innerHeight;
 
-      // Trigger reflow
-      void document.body.offsetHeight;
+      if (currentHeight === lastHeight) {
+        // Force Chrome to recalculate
+        document.body.style.height = currentHeight + 'px';
+        document.documentElement.style.height = currentHeight + 'px';
 
-      // Reset to dynamic viewport height
-      document.documentElement.style.height = '100dvh';
-      document.body.style.minHeight = '100dvh';
-
-      // Force scroll to trigger repaint (mobile trick)
-      if (isMobile) {
-        window.scrollTo(0, 1);
-        setTimeout(function () {
-          window.scrollTo(0, 0);
-        }, 10);
+        setTimeout(() => {
+          document.body.style.height = '100%';
+          document.documentElement.style.height = '100%';
+        }, 50);
       }
+
+      lastHeight = currentHeight;
     }
 
-    function handleResize() {
-      clearTimeout(resizeTimeout);
-      resizeTimeout = setTimeout(function () {
-        var currentHeight = window.innerHeight;
-
-        // When keyboard closes, height increases - force a repaint
-        if (currentHeight > lastHeight) {
-          console.log('Keyboard closed - resetting viewport');
-          forceViewportReset();
-        }
-
-        lastHeight = currentHeight;
-      }, 100);
-    }
-
-    // Listen to window resize
-    window.addEventListener('resize', handleResize);
-
-    // Also listen to visualViewport for better handling on modern browsers
-    if (window.visualViewport) {
-      window.visualViewport.addEventListener('resize', handleResize);
-      window.visualViewport.addEventListener('scroll', function () {
-        // Reset on scroll (helps with keyboard dismiss)
-        if (window.visualViewport.height > lastHeight) {
-          forceViewportReset();
-        }
-      });
-    }
-
-    // Listen to focus events as additional trigger
-    document.addEventListener('focusout', function () {
-      if (isMobile) {
-        setTimeout(forceViewportReset, 300);
-      }
-    });
+    window.addEventListener('resize', forceResize);
+    window.addEventListener('focus', forceResize);
+    window.addEventListener('blur', forceResize);
   </script>
   <!-- This script adds the flutter initialization JS code -->
   <script src="flutter.js" defer=""></script>
