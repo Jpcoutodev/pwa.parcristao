@@ -385,7 +385,7 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
   Widget build(BuildContext context) {
     // Calculate real height ignoring keyboard
     final mediaQuery = MediaQuery.of(context);
-    final realHeight = mediaQuery.size.height + mediaQuery.viewInsets.bottom;
+    final realHeight = mediaQuery.size.height - mediaQuery.viewInsets.bottom;
     
     return GestureDetector(
       onTap: () {
@@ -393,7 +393,7 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
         FocusManager.instance.primaryFocus?.unfocus();
       },
       child: Scaffold(
-        resizeToAvoidBottomInset: false, // Don't let Scaffold mess with layout on Web
+        resizeToAvoidBottomInset: false, // Don't let Scaffold mess with layout on Web (prevents white screen/squashing)
         body: Stack(
           children: [
             // Background Gradient
@@ -429,7 +429,13 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
             SafeArea(
             child: Center(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.all(24),
+                physics: const ClampingScrollPhysics(),
+                padding: EdgeInsets.only(
+                  left: 24, 
+                  right: 24, 
+                  top: 24, 
+                  bottom: 24 + mediaQuery.viewInsets.bottom // Manually add padding for keyboard
+                ),
                 child: FadeTransition(
                   opacity: _fadeAnimation,
                   child: ConstrainedBox(
