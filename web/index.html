@@ -90,14 +90,14 @@
     // The value below is injected by flutter build, do not touch.
     var serviceWorkerVersion = null;
 
-    // Production-ready fix for mobile keyboard resize issue
+    // Fix for mobile keyboard resize issue - only use resize event
     let lastHeight = window.innerHeight;
 
     function forceResize() {
       const currentHeight = window.innerHeight;
 
-      if (currentHeight === lastHeight) {
-        // Force Chrome to recalculate
+      // Only force recalculate when height actually changes (keyboard open/close)
+      if (currentHeight !== lastHeight) {
         document.body.style.height = currentHeight + 'px';
         document.documentElement.style.height = currentHeight + 'px';
 
@@ -105,14 +105,13 @@
           document.body.style.height = '100%';
           document.documentElement.style.height = '100%';
         }, 50);
-      }
 
-      lastHeight = currentHeight;
+        lastHeight = currentHeight;
+      }
     }
 
+    // Only listen to resize event - focus/blur can cause Flutter rebuild
     window.addEventListener('resize', forceResize);
-    window.addEventListener('focus', forceResize);
-    window.addEventListener('blur', forceResize);
   </script>
   <!-- This script adds the flutter initialization JS code -->
   <script src="flutter.js" defer=""></script>
