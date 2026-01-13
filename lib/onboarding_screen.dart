@@ -828,11 +828,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
   Widget _buildWelcomeStep() {
     return FadeTransition(
       opacity: _fadeAnimation,
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.symmetric(horizontal: 30.0, vertical: 20),
         child: Column(
           children: [
-            const Spacer(flex: 1),
+            const SizedBox(height: 20),
             
             // Animated Logo/Icon with glow
             AnimatedBuilder(
@@ -841,8 +841,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
                 return Transform.scale(
                   scale: _pulseAnimation.value,
                   child: Container(
-                    width: 140,
-                    height: 140,
+                    width: 120,
+                    height: 120,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       gradient: LinearGradient(
@@ -871,8 +871,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
                         children: [
                           // Outer ring
                           Container(
-                            width: 100,
-                            height: 100,
+                            width: 80,
+                            height: 80,
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
                               border: Border.all(
@@ -884,7 +884,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
                           // Heart icon
                           const Icon(
                             Icons.favorite_rounded,
-                            size: 60,
+                            size: 50,
                             color: Colors.white,
                           ),
                         ],
@@ -895,7 +895,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
               },
             ),
             
-            const SizedBox(height: 50),
+            const SizedBox(height: 30),
             
             // Main Title with elegant typography
             ShaderMask(
@@ -936,7 +936,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
               ),
             ),
             
-            const SizedBox(height: 30),
+            const SizedBox(height: 20),
             
 
             
@@ -955,7 +955,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
               ),
             ),
             
-            const Spacer(flex: 1),
+            const SizedBox(height: 30),
             
             // Feature highlights
             Row(
@@ -967,7 +967,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
               ],
             ),
             
-            const SizedBox(height: 40),
+            const SizedBox(height: 30),
             
             // CTA Button Premium
             _buildPremiumButton(
@@ -1085,7 +1085,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
               ),
             ),
             
-            const SizedBox(height: 10),
+            const SizedBox(height: 20),
           ],
         ),
       ),
