@@ -108,7 +108,7 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
           email: email,
           password: password,
           emailRedirectTo: kIsWeb 
-              ? 'https://parcristao.app' // Web usa explicitamente o domínio
+              ? 'https://app.parcristao.app' // Web usa explicitamente o domínio
               : 'app.parcristao://login-callback', // Mobile usa o deep link
         );
         
