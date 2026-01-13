@@ -967,7 +967,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
               ],
             ),
             
-            const SizedBox(height: 30),
+            const SizedBox(height: 40),
             
             // CTA Button Premium
             _buildPremiumButton(
@@ -976,116 +976,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
               _nextPage,
             ),
             
-            const SizedBox(height: 16),
-            
-            // Divider "OU"
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Container(
-                  width: 80,
-                  height: 1,
-                  color: Colors.white.withOpacity(0.3),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Text(
-                    'OU',
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.8),
-                      fontWeight: FontWeight.w600,
-                      fontSize: 14,
-                    ),
-                  ),
-                ),
-                Container(
-                  width: 80,
-                  height: 1,
-                  color: Colors.white.withOpacity(0.3),
-                ),
-              ],
-            ),
-            
-            const SizedBox(height: 16),
-            
-            // Botão Google Sign-In
-            Container(
-              width: double.infinity,
-              height: 60,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(30),
-                color: Colors.white,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.15),
-                    blurRadius: 20,
-                    offset: const Offset(0, 10),
-                  ),
-                ],
-              ),
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: _isLoadingGoogle ? null : _signInWithGoogle,
-                  borderRadius: BorderRadius.circular(30),
-                  child: _isLoadingGoogle
-                    ? const Center(
-                        child: SizedBox(
-                          height: 24,
-                          width: 24,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                      )
-                    : Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 24),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Container(
-                              width: 28,
-                              height: 28,
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                shape: BoxShape.circle,
-                              ),
-                              child: const Icon(
-                                Icons.g_mobiledata_rounded,
-                                color: Color(0xFF4285F4),
-                                size: 24,
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Text(
-                              'Entrar com Google',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.grey[800],
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                ),
-              ),
-            ),
-            
-            const SizedBox(height: 20),
-            
-            // Skip text
-            TextButton(
-              onPressed: _finishOnboarding,
-              child: Text(
-                'Já tenho uma conta',
-                style: TextStyle(
-                  color: Colors.white.withOpacity(0.7),
-                  fontSize: 14,
-                  fontWeight: FontWeight.w400,
-                ),
-              ),
-            ),
-            
-            const SizedBox(height: 20),
+            const SizedBox(height: 30),
           ],
         ),
       ),
