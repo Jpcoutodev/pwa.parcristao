@@ -1041,10 +1041,18 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Image.network(
-                              'https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg',
-                              height: 24,
-                              width: 24,
+                            Container(
+                              width: 28,
+                              height: 28,
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                Icons.g_mobiledata_rounded,
+                                color: Color(0xFF4285F4),
+                                size: 24,
+                              ),
                             ),
                             const SizedBox(width: 12),
                             Text(

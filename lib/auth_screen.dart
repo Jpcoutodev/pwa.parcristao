@@ -700,10 +700,18 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                                 height: 55,
                                 child: ElevatedButton.icon(
                                   onPressed: _isLoading ? null : _signInWithGoogle,
-                                  icon: Image.network(
-                                    'https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg',
-                                    height: 24,
+                                  icon: Container(
                                     width: 24,
+                                    height: 24,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: const Icon(
+                                      Icons.g_mobiledata_rounded,
+                                      color: Color(0xFF4285F4),
+                                      size: 20,
+                                    ),
                                   ),
                                   label: Text(
                                     _isLogin ? 'Entrar com Google' : 'Cadastrar com Google',
