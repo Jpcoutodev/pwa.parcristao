@@ -337,6 +337,30 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
     }
   }
 
+  Future<void> _signInWithGoogle() async {
+    setState(() => _isLoading = true);
+
+    try {
+      await Supabase.instance.client.auth.signInWithOAuth(
+        OAuthProvider.google,
+        redirectTo: kIsWeb 
+          ? 'https://app.parcristao.app/' 
+          : 'parcristao://login-callback',
+      );
+      // O listener em initState vai processar a navegação automaticamente
+    } on AuthException catch (e) {
+      if (mounted) {
+        _showError('Erro ao fazer login com Google: ${e.message}');
+      }
+    } catch (e) {
+      if (mounted) {
+        _showError('Erro inesperado: $e');
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
   void _showForgotPasswordDialog() {
     final emailController = TextEditingController();
     showDialog(
@@ -650,6 +674,56 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
                                         ),
                                       ),
                                 ),
+                              
+                              const SizedBox(height: 20),
+                              
+                              // Divider "OU"
+                              Row(
+                                children: [
+                                  Expanded(child: Divider(color: Colors.grey[300], thickness: 1)),
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                                    child: Text(
+                                      'OU',
+                                      style: TextStyle(color: Colors.grey[600], fontWeight: FontWeight.w600),
+                                    ),
+                                  ),
+                                  Expanded(child: Divider(color: Colors.grey[300], thickness: 1)),
+                                ],
+                              ),
+                              
+                              const SizedBox(height: 20),
+                              
+                              // Botão Google Sign-In
+                              SizedBox(
+                                width: double.infinity,
+                                height: 55,
+                                child: ElevatedButton.icon(
+                                  onPressed: _isLoading ? null : _signInWithGoogle,
+                                  icon: Image.network(
+                                    'https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg',
+                                    height: 24,
+                                    width: 24,
+                                  ),
+                                  label: Text(
+                                    _isLogin ? 'Entrar com Google' : 'Cadastrar com Google',
+                                    style: const TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w600,
+                                      letterSpacing: 0.5,
+                                    ),
+                                  ),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.white,
+                                    foregroundColor: Colors.black87,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(16),
+                                      side: BorderSide(color: Colors.grey[300]!),
+                                    ),
+                                    elevation: 2,
+                                  ),
+                                ),
+                              ),
                               ],
                             ),
                           ),

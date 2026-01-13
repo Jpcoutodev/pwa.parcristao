@@ -72,6 +72,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
   bool _showManualCityInput = false;
   final TextEditingController _manualCityController = TextEditingController();
   bool _isGeocodingCity = false;
+  bool _isLoadingGoogle = false;
 
   Future<void> _pickImagesFromGallery() async {
     try {
@@ -434,6 +435,40 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
         duration: const Duration(milliseconds: 400),
         curve: Curves.easeInOut,
       );
+    }
+  }
+
+  Future<void> _signInWithGoogle() async {
+    setState(() => _isLoadingGoogle = true);
+
+    try {
+      await Supabase.instance.client.auth.signInWithOAuth(
+        OAuthProvider.google,
+        redirectTo: kIsWeb 
+          ? 'https://app.parcristao.app/' 
+          : 'parcristao://login-callback',
+      );
+      // O callback será processado na AuthScreen
+    } on AuthException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro ao fazer login com Google: ${e.message}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro inesperado: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoadingGoogle = false);
     }
   }
 
@@ -939,6 +974,92 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
               'Começar Minha Jornada',
               Icons.arrow_forward_rounded,
               _nextPage,
+            ),
+            
+            const SizedBox(height: 16),
+            
+            // Divider "OU"
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  width: 80,
+                  height: 1,
+                  color: Colors.white.withOpacity(0.3),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Text(
+                    'OU',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.8),
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                    ),
+                  ),
+                ),
+                Container(
+                  width: 80,
+                  height: 1,
+                  color: Colors.white.withOpacity(0.3),
+                ),
+              ],
+            ),
+            
+            const SizedBox(height: 16),
+            
+            // Botão Google Sign-In
+            Container(
+              width: double.infinity,
+              height: 60,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(30),
+                color: Colors.white,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.15),
+                    blurRadius: 20,
+                    offset: const Offset(0, 10),
+                  ),
+                ],
+              ),
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: _isLoadingGoogle ? null : _signInWithGoogle,
+                  borderRadius: BorderRadius.circular(30),
+                  child: _isLoadingGoogle
+                    ? const Center(
+                        child: SizedBox(
+                          height: 24,
+                          width: 24,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      )
+                    : Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 24),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Image.network(
+                              'https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg',
+                              height: 24,
+                              width: 24,
+                            ),
+                            const SizedBox(width: 12),
+                            Text(
+                              'Entrar com Google',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.grey[800],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                ),
+              ),
             ),
             
             const SizedBox(height: 20),

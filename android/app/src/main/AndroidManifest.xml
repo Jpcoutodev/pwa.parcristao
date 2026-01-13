@@ -31,12 +31,31 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
-            <!-- Deep Linking for Google Login -->
+            
+            <!-- Deep Linking for OAuth - Custom Scheme 1 (app.parcristao) -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="app.parcristao" android:host="login-callback" />
+            </intent-filter>
+            
+            <!-- Deep Linking for OAuth - Custom Scheme 2 (parcristao) -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="parcristao" android:host="login-callback" />
+            </intent-filter>
+            
+            <!-- Deep Linking for OAuth - HTTPS Domain -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data 
+                    android:scheme="https"
+                    android:host="app.parcristao.app" />
             </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.
