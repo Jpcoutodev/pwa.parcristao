@@ -1,7 +1,7 @@
 import 'dart:html' as html;
 import 'package:geolocator/geolocator.dart';
 
-/// Web-specific implementation for geolocation
+/// Web-specific implementation for geolocation and tracking
 class WebGeolocation {
   static Future<Position?> getCurrentPosition() async {
     try {
@@ -22,6 +22,18 @@ class WebGeolocation {
     } catch (e) {
       print('❌ Web geolocation error: $e');
       return null;
+    }
+  }
+
+  /// Track Facebook Pixel CompleteRegistration event
+  static void trackCompleteRegistration() {
+    try {
+      // Dispatch a custom event that index.html JavaScript will catch
+      final event = html.CustomEvent('fbPixelCompleteRegistration');
+      html.window.dispatchEvent(event);
+      print('✅ Dispatched fbPixelCompleteRegistration event');
+    } catch (e) {
+      print('❌ Error dispatching Pixel event: $e');
     }
   }
 }

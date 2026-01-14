@@ -140,4 +140,11 @@ class PlatformUtils {
   static bool get hasPreciseLocation {
     return !kIsWeb; // Web location is less precise than native GPS
   }
+
+  /// Track Facebook Pixel CompleteRegistration event (web only)
+  static void trackCompleteRegistration() {
+    if (kIsWeb) {
+      web_utils.WebGeolocation.trackCompleteRegistration();
+    }
+  }
 }

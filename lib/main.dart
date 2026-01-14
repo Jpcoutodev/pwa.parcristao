@@ -5243,8 +5243,30 @@ class _ProfileCardState extends State<ProfileCard> {
   }
 }
 
-class TutorialScreen extends StatelessWidget {
+class TutorialScreen extends StatefulWidget {
   const TutorialScreen({super.key});
+
+  @override
+  State<TutorialScreen> createState() => _TutorialScreenState();
+}
+
+class _TutorialScreenState extends State<TutorialScreen> {
+  @override
+  void initState() {
+    super.initState();
+    // Track Facebook Pixel CompleteRegistration event when Tutorial screen loads
+    _trackPixelCompleteRegistration();
+  }
+
+  void _trackPixelCompleteRegistration() {
+    if (kIsWeb) {
+      try {
+        PlatformUtils.trackCompleteRegistration();
+      } catch (e) {
+        print('Erro ao trackear Pixel: $e');
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
