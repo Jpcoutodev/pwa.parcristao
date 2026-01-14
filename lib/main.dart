@@ -5244,7 +5244,8 @@ class _ProfileCardState extends State<ProfileCard> {
 }
 
 class TutorialScreen extends StatefulWidget {
-  const TutorialScreen({super.key});
+  final bool fromOnboarding;
+  const TutorialScreen({super.key, this.fromOnboarding = false});
 
   @override
   State<TutorialScreen> createState() => _TutorialScreenState();
@@ -5254,8 +5255,10 @@ class _TutorialScreenState extends State<TutorialScreen> {
   @override
   void initState() {
     super.initState();
-    // Track Facebook Pixel CompleteRegistration event when Tutorial screen loads
-    _trackPixelCompleteRegistration();
+    // Track Facebook Pixel CompleteRegistration event ONLY if coming from onboarding
+    if (widget.fromOnboarding) {
+      _trackPixelCompleteRegistration();
+    }
   }
 
   void _trackPixelCompleteRegistration() {

@@ -559,7 +559,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
       if (mounted) {
          Navigator.pushReplacement(
            context,
-           MaterialPageRoute(builder: (context) => const TutorialScreen()),
+           MaterialPageRoute(builder: (context) => const TutorialScreen(fromOnboarding: true)),
          );
       }
     } catch (e) {
