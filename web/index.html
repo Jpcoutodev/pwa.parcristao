@@ -71,7 +71,7 @@
     fbq('track', 'PageView');
 
     // Listen for CompleteRegistration event from Flutter
-    window.addEventListener('trackCompleteRegistration', function () {
+    window.addEventListener('fbPixelCompleteRegistration', function () {
       fbq('track', 'CompleteRegistration');
       console.log('✅ Facebook Pixel: CompleteRegistration tracked');
     });
