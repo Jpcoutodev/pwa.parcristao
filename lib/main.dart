@@ -912,46 +912,42 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         targetGender = 'Masculino';
       }
       
-      // 2. Fetch IDs of profiles I already interacted with (Like, Pass, Super)
+      // 2. Fetch IDs of profiles I already interacted with using RPC (single call)
+      final interactionsResponse = await supabase.rpc('get_user_interactions', params: {
+        'user_id': userId,
+      });
+      
       final List<String> swipedIds = [userId]; // Exclude myself too
       
-      final likesRes = await supabase.from('likes').select('liked_id').eq('liker_id', userId);
-      final passesRes = await supabase.from('passes').select('passed_id').eq('user_id', userId);
-      final superRes = await supabase.from('super_likes').select('liked_id').eq('liker_id', userId);
-      
-      if (likesRes != null) swipedIds.addAll((likesRes as List).map((l) => l['liked_id'] as String));
-      if (passesRes != null) swipedIds.addAll((passesRes as List).map((p) => p['passed_id'] as String));
-      if (superRes != null) swipedIds.addAll((superRes as List).map((s) => s['liked_id'] as String));
-      
-      // 3. Fetch profiles (excluding swiped)
-      var query = supabase
-          .from('profiles')
-          .select()
-          .not('id', 'in', swipedIds); // Direct exclusion in DB
-      
-      if (targetGender.isNotEmpty) {
-        query = query.eq('gender', targetGender);
+      if (interactionsResponse != null && interactionsResponse.isNotEmpty) {
+        final interactions = interactionsResponse[0];
+        final likedIds = (interactions['liked_ids'] as List?)?.cast<String>() ?? [];
+        final passedIds = (interactions['passed_ids'] as List?)?.cast<String>() ?? [];
+        final superLikedIds = (interactions['super_liked_ids'] as List?)?.cast<String>() ?? [];
+        
+        swipedIds.addAll(likedIds);
+        swipedIds.addAll(passedIds);
+        swipedIds.addAll(superLikedIds);
       }
       
-      // Apply Server-Side Filters
-      query = query.gte('age', ageMin).lte('age', ageMax);
-      
-      if (religionFilters.isNotEmpty) {
-        query = query.filter('faith', 'in', religionFilters.toList());
-      }
-          
-      if (loadMore) {
-        query = query.gt('id', _lastLoadedProfileId!);
-      }
-          
-      final response = await query
-          .order('id', ascending: true)
-          .limit(30);
+      // 3. Use server-side RPC with PostGIS for efficient distance filtering
+      final response = await supabase.rpc('find_nearby_profiles', params: {
+        'user_lat': myLat,
+        'user_lng': myLng,
+        'radius_km': searchRadius,
+        'target_gender': targetGender.isNotEmpty ? targetGender : null,
+        'min_age': ageMin,
+        'max_age': ageMax,
+        'religion_list': religionFilters.toList(),
+        'excluded_ids': swipedIds,
+        'cursor_id': loadMore ? _lastLoadedProfileId : null,
+        'page_limit': 30,
+      });
 
       if (response != null) {
         final List<dynamic> data = response;
         
-        // 4. Transform data to Profile objects
+        // 4. Transform data to Profile objects (distance already calculated server-side)
         List<Profile> fetchedProfiles = data.map((json) => Profile(
           id: json['id'],
           name: json['name'] ?? 'Usuário',
@@ -970,20 +966,13 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           isVerified: json['is_verified'] ?? false,
         )).toList();
         
-        // Filter by distance (if user has location) - Remains client-side
-        if (myLat != null && myLng != null) {
-          fetchedProfiles = fetchedProfiles.where((profile) {
-            if (profile.latitude == null || profile.longitude == null) return true;
-            double distance = Geolocator.distanceBetween(myLat, myLng, profile.latitude!, profile.longitude!) / 1000;
-            return distance <= searchRadius;
-          }).toList();
-        }
+        // Distance filtering now done server-side via PostGIS - no client filtering needed!
 
-        print('======= FETCH PROFILES DEBUG =======');
-        print('Total fetched from DB: ${data.length}');
-        print('Excluding ${swipedIds.length} IDs (self + swiped)');
-        print('Final count after Local filters: ${fetchedProfiles.length}');
-        print('=====================================');
+        print('======= FETCH PROFILES DEBUG (PostGIS) =======');
+        print('Total fetched from RPC: ${data.length}');
+        print('Excluded ${swipedIds.length} IDs (self + swiped)');
+        print('Distance filtered server-side with radius: ${searchRadius}km');
+        print('===============================================');
 
         setState(() {
           if (loadMore) {
@@ -997,12 +986,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             _isLoading = false;
           }
           
-          if (fetchedProfiles.isNotEmpty) {
-             // For cursor pagination, we need the ID of the LAST fetched profile from DB (before local filtering)
-             // However, since we filter locally by distance, we might skip some.
-             // But the cursor must be based on the DB sort order.
-             // The DB sorts by ID ASC. So the largest ID in the `data` list is the cursor.
-             // We sorted by ID ASC in query, so the last item in `data` has the highest ID.
+          if (data.isNotEmpty) {
+             // Cursor is based on the last profile ID from the RPC response
             _lastLoadedProfileId = data.last['id'];
           }
           
