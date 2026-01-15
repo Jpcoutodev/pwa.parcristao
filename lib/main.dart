@@ -305,7 +305,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   int _selectedIndex = 0; // Índice da aba selecionada
   
   // Search preferences
-  double _searchRadius = 500.0;
+  double _searchRadius = 1000.0;
   RangeValues _ageRange = const RangeValues(18, 75);
   Set<String> _religionFilters = {'Católica', 'Evangélica', 'Ortodoxa', 'Outras denominações cristãs'};
   
@@ -314,7 +314,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   bool _isCheckingLocation = true;
   
   // Pagination
-  int _profileOffset = 0;
+  String? _lastLoadedProfileId;
   bool _hasMoreProfiles = true;
   bool _isLoadingMore = false;
   
@@ -852,7 +852,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     } else {
       setState(() {
         _isLoading = true;
-        _profileOffset = 0;
+        _lastLoadedProfileId = null;
         _hasMoreProfiles = true;
       });
     }
@@ -883,12 +883,27 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       double? myLng = myProfileData['longitude'];
       
       // Load search preferences (with defaults)
-      int searchRadius = myProfileData['search_radius'] ?? 500;
+      int searchRadius = myProfileData['search_radius'] ?? 1000;
       int ageMin = myProfileData['age_min'] ?? 18;
       int ageMax = myProfileData['age_max'] ?? 75;
-      List<String> religionFilters = myProfileData['religion_filters'] != null 
-          ? List<String>.from(myProfileData['religion_filters'])
-          : ['Católica', 'Evangélica', 'Ortodoxa', 'Outras denominações cristãs'];
+      List<dynamic> religionList = myProfileData['religion_filters'] ?? [];
+      Set<String> religionFilters = religionList.map((e) => e.toString()).toSet();
+      
+      if (religionFilters.isEmpty) {
+        religionFilters = {'Católica', 'Evangélica', 'Ortodoxa', 'Outras denominações cristãs'};
+      }
+
+      // CRITICAL FIX: Update state variables so UI reflects saved settings
+      if (!loadMore) {
+        // Ensure radius is within valid bounds (min 50, max 3500)
+        double loadedRadius = searchRadius.toDouble();
+        if (loadedRadius < 50) loadedRadius = 50;
+        if (loadedRadius > 3500) loadedRadius = 3500;
+
+        _searchRadius = loadedRadius;
+        _ageRange = RangeValues(ageMin.toDouble(), ageMax.toDouble());
+        _religionFilters = religionFilters;
+      }
       
       String targetGender = '';
       if (myGender == 'Masculino') {
@@ -917,15 +932,26 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       if (targetGender.isNotEmpty) {
         query = query.eq('gender', targetGender);
       }
+      
+      // Apply Server-Side Filters
+      query = query.gte('age', ageMin).lte('age', ageMax);
+      
+      if (religionFilters.isNotEmpty) {
+        query = query.filter('faith', 'in', religionFilters.toList());
+      }
+          
+      if (loadMore) {
+        query = query.gt('id', _lastLoadedProfileId!);
+      }
           
       final response = await query
-          .range(_profileOffset, _profileOffset + 19)
-          .limit(20);
+          .order('id', ascending: true)
+          .limit(30);
 
       if (response != null) {
         final List<dynamic> data = response;
         
-        // 4. Apply filters (Age, Religion, Distance)
+        // 4. Transform data to Profile objects
         List<Profile> fetchedProfiles = data.map((json) => Profile(
           id: json['id'],
           name: json['name'] ?? 'Usuário',
@@ -944,18 +970,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           isVerified: json['is_verified'] ?? false,
         )).toList();
         
-        // Filter by age
-        fetchedProfiles = fetchedProfiles.where((profile) {
-          return profile.age >= ageMin && profile.age <= ageMax;
-        }).toList();
-        
-        // Filter by religion
-        fetchedProfiles = fetchedProfiles.where((profile) {
-          if (profile.faith == null || profile.faith!.isEmpty) return true;
-          return religionFilters.contains(profile.faith);
-        }).toList();
-        
-        // Filter by distance (if user has location)
+        // Filter by distance (if user has location) - Remains client-side
         if (myLat != null && myLng != null) {
           fetchedProfiles = fetchedProfiles.where((profile) {
             if (profile.latitude == null || profile.longitude == null) return true;
@@ -972,15 +987,26 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
         setState(() {
           if (loadMore) {
-            profiles.insertAll(0, fetchedProfiles);
-            _isLoadingMore = false;
+             // Avoid duplicates
+             final existingIds = profiles.map((p) => p.id).toSet();
+             final newProfiles = fetchedProfiles.where((p) => !existingIds.contains(p.id)).toList();
+             profiles.insertAll(0, newProfiles);
+             _isLoadingMore = false;
           } else {
             profiles = fetchedProfiles;
             _isLoading = false;
           }
           
-          _profileOffset += response.length;
-          _hasMoreProfiles = response.length == 20;
+          if (fetchedProfiles.isNotEmpty) {
+             // For cursor pagination, we need the ID of the LAST fetched profile from DB (before local filtering)
+             // However, since we filter locally by distance, we might skip some.
+             // But the cursor must be based on the DB sort order.
+             // The DB sorts by ID ASC. So the largest ID in the `data` list is the cursor.
+             // We sorted by ID ASC in query, so the last item in `data` has the highest ID.
+            _lastLoadedProfileId = data.last['id'];
+          }
+          
+          _hasMoreProfiles = data.length == 30;
         });
       }
     } catch (e) {
@@ -4037,8 +4063,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                         Slider(
                           value: _searchRadius,
                           min: 50,
-                          max: 1000,
-                          divisions: 95,
+                          max: 3500,
+                          divisions: 345,
                           activeColor: const Color(0xFF667eea),
                           inactiveColor: Colors.grey[300],
                           onChanged: (value) {
@@ -4052,7 +4078,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             Text('50 km', style: TextStyle(color: Colors.grey[600], fontSize: 12)),
-                            Text('1000 km', style: TextStyle(color: Colors.grey[600], fontSize: 12)),
+                            Text('3500 km', style: TextStyle(color: Colors.grey[600], fontSize: 12)),
                           ],
                         ),
                       ],
