@@ -417,7 +417,7 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
         FocusManager.instance.primaryFocus?.unfocus();
       },
       child: Scaffold(
-        resizeToAvoidBottomInset: false, // Don't let Scaffold mess with layout on Web (prevents white screen/squashing)
+        resizeToAvoidBottomInset: true, // Allow Flutter to properly resize for keyboard
         body: Stack(
           children: [
             // Background Gradient

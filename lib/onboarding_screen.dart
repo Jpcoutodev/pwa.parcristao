@@ -623,58 +623,65 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Stack(
-        children: [
-          // Background Gradient Premium
-          Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  _primaryColor,
-                  _secondaryColor,
-                  _accentPink.withOpacity(0.8),
-                ],
-                stops: const [0.0, 0.5, 1.0],
+    return GestureDetector(
+      onTap: () {
+        // Close keyboard when tapping outside - fixes Android PWA keyboard issue
+        FocusManager.instance.primaryFocus?.unfocus();
+      },
+      child: Scaffold(
+        resizeToAvoidBottomInset: true, // Allow Flutter to properly resize for keyboard
+        body: Stack(
+          children: [
+            // Background Gradient Premium
+            Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    _primaryColor,
+                    _secondaryColor,
+                    _accentPink.withOpacity(0.8),
+                  ],
+                  stops: const [0.0, 0.5, 1.0],
+                ),
               ),
             ),
-          ),
-          
-          // Animated Decorative Elements
-          ..._buildFloatingDecorations(),
+            
+            // Animated Decorative Elements
+            ..._buildFloatingDecorations(),
 
-          // Content
-          SafeArea(
-            child: Column(
-              children: [
-                _buildHeader(),
-                Expanded(
-                  child: PageView(
-                    controller: _pageController,
-                    physics: const NeverScrollableScrollPhysics(),
-                    onPageChanged: (page) {
-                      setState(() {
-                        _currentPage = page;
-                      });
-                    },
-                    children: [
-                      _buildWelcomeStep(),
-                      _buildBasicInfoStep(),
-                      _buildBioStep(),
-                      _buildLocationStep(),
-                      _buildInterestsStep(),
-                      _buildFaithStep(),
-                      _buildChurchStep(),
-                      _buildPhotosStep(),
-                    ],
+            // Content
+            SafeArea(
+              child: Column(
+                children: [
+                  _buildHeader(),
+                  Expanded(
+                    child: PageView(
+                      controller: _pageController,
+                      physics: const NeverScrollableScrollPhysics(),
+                      onPageChanged: (page) {
+                        setState(() {
+                          _currentPage = page;
+                        });
+                      },
+                      children: [
+                        _buildWelcomeStep(),
+                        _buildBasicInfoStep(),
+                        _buildBioStep(),
+                        _buildLocationStep(),
+                        _buildInterestsStep(),
+                        _buildFaithStep(),
+                        _buildChurchStep(),
+                        _buildPhotosStep(),
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
