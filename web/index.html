@@ -116,19 +116,28 @@
     // The value below is injected by flutter build, do not touch.
     var serviceWorkerVersion = null;
 
-    // Fix for Android Chrome keyboard + BACK BUTTON issue
-    // The back button closes keyboard without firing any DOM events
+    // ULTIMATE Fix for Android Chrome keyboard issues
+    // Handles: back button, dismiss button, and all keyboard close methods
     (function () {
       var isAndroid = /Android/i.test(navigator.userAgent);
       if (!isAndroid) return;
 
       var initialHeight = window.innerHeight;
-      var lastKnownHeight = initialHeight;
       var isKeyboardOpen = false;
       var pollingInterval = null;
+      var lastResetTime = 0;
 
       function forceLayoutReset() {
+        // Debounce: don't reset more than once every 150ms
+        var now = Date.now();
+        if (now - lastResetTime < 150) return;
+        lastResetTime = now;
+
         var height = window.innerHeight + 'px';
+
+        // Scroll trick to force Chrome to recalculate
+        window.scrollTo(0, 1);
+        window.scrollTo(0, 0);
 
         document.body.style.height = height;
         document.documentElement.style.height = height;
@@ -136,6 +145,11 @@
 
         var flutterView = document.querySelector('flt-glass-pane');
         if (flutterView) {
+          // Temporarily change then restore to force repaint
+          flutterView.style.display = 'none';
+          void flutterView.offsetHeight;
+          flutterView.style.display = '';
+
           flutterView.style.height = height;
           flutterView.style.minHeight = height;
           flutterView.style.maxHeight = height;
@@ -144,6 +158,10 @@
           if (shadowRoot) {
             var fltHost = shadowRoot.querySelector('flt-semantics-host');
             if (fltHost) fltHost.style.height = height;
+
+            // Also try to find the rendering host
+            var renderHost = shadowRoot.querySelector('flt-scene-host');
+            if (renderHost) renderHost.style.height = height;
           }
         }
 
@@ -160,23 +178,22 @@
         });
       }
 
-      // POLLING: Check height every 200ms to detect back button keyboard close
+      // FAST POLLING: Check every 100ms
       function startPolling() {
         if (pollingInterval) return;
         pollingInterval = setInterval(function () {
           var currentHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
 
           // Keyboard closed (height increased significantly)
-          if (isKeyboardOpen && currentHeight >= initialHeight * 0.9) {
+          if (isKeyboardOpen && currentHeight >= initialHeight * 0.88) {
             isKeyboardOpen = false;
             stopPolling();
             forceLayoutReset();
-            setTimeout(forceLayoutReset, 200);
-            setTimeout(forceLayoutReset, 400);
+            setTimeout(forceLayoutReset, 150);
+            setTimeout(forceLayoutReset, 300);
+            setTimeout(forceLayoutReset, 500);
           }
-
-          lastKnownHeight = currentHeight;
-        }, 200);
+        }, 100);
       }
 
       function stopPolling() {
@@ -186,48 +203,50 @@
         }
       }
 
-      // Start polling when input is focused (keyboard opens)
+      // Monitor ANY input focus
       document.addEventListener('focusin', function (e) {
-        if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.contentEditable === 'true')) {
-          setTimeout(function () {
-            var currentHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
-            if (currentHeight < initialHeight * 0.85) {
-              isKeyboardOpen = true;
-              startPolling();
-            }
-          }, 300);
+        var target = e.target;
+        if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+          isKeyboardOpen = true;
+          startPolling();
         }
-      });
+      }, true);
 
-      // Also handle focusout
-      document.addEventListener('focusout', function (e) {
-        if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) {
-          setTimeout(function () {
-            var currentHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
-            if (currentHeight >= initialHeight * 0.9) {
-              isKeyboardOpen = false;
-              stopPolling();
-              forceLayoutReset();
-            }
-          }, 300);
-        }
-      });
-
-      // Monitor visualViewport as backup
-      if (window.visualViewport) {
-        window.visualViewport.addEventListener('resize', function () {
-          var currentHeight = window.visualViewport.height;
-
-          if (currentHeight < initialHeight * 0.85 && !isKeyboardOpen) {
-            isKeyboardOpen = true;
-            startPolling();
-          } else if (currentHeight >= initialHeight * 0.9 && isKeyboardOpen) {
+      // Also handle blur events
+      document.addEventListener('blur', function (e) {
+        setTimeout(function () {
+          var currentHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+          if (currentHeight >= initialHeight * 0.88) {
             isKeyboardOpen = false;
             stopPolling();
             forceLayoutReset();
-            setTimeout(forceLayoutReset, 200);
           }
-        });
+        }, 200);
+      }, true);
+
+      // Monitor visualViewport resize AND scroll
+      if (window.visualViewport) {
+        var handleViewportChange = function () {
+          var currentHeight = window.visualViewport.height;
+
+          if (currentHeight < initialHeight * 0.85) {
+            if (!isKeyboardOpen) {
+              isKeyboardOpen = true;
+              startPolling();
+            }
+          } else if (currentHeight >= initialHeight * 0.88) {
+            if (isKeyboardOpen) {
+              isKeyboardOpen = false;
+              stopPolling();
+              forceLayoutReset();
+              setTimeout(forceLayoutReset, 150);
+              setTimeout(forceLayoutReset, 300);
+            }
+          }
+        };
+
+        window.visualViewport.addEventListener('resize', handleViewportChange);
+        window.visualViewport.addEventListener('scroll', handleViewportChange);
       }
 
       // Handle orientation change
@@ -238,10 +257,20 @@
         }, 500);
       });
 
-      // Safety: reset on page visibility change (e.g., switching apps)
+      // Safety: reset on page visibility change
       document.addEventListener('visibilitychange', function () {
         if (document.visibilityState === 'visible') {
           setTimeout(forceLayoutReset, 300);
+        }
+      });
+
+      // Extra safety: also listen to window resize
+      window.addEventListener('resize', function () {
+        var currentHeight = window.innerHeight;
+        if (currentHeight >= initialHeight * 0.9 && isKeyboardOpen) {
+          isKeyboardOpen = false;
+          stopPolling();
+          setTimeout(forceLayoutReset, 100);
         }
       });
     })();
