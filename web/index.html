@@ -116,28 +116,34 @@
     // The value below is injected by flutter build, do not touch.
     var serviceWorkerVersion = null;
 
-    // Fix for mobile keyboard resize issue - only use resize event
-    let lastHeight = window.innerHeight;
+    // Fix for Android Chrome 108+ keyboard resize issue
+    // The keyboard only resizes visualViewport, not layoutViewport, confusing Flutter
+    (function () {
+      var isAndroid = /Android/i.test(navigator.userAgent);
+      if (isAndroid && window.visualViewport) {
+        var initialHeight = window.innerHeight;
 
-    function forceResize() {
-      const currentHeight = window.innerHeight;
+        function resetViewport() {
+          // When viewport returns to ~90% of initial height, keyboard is closed
+          if (window.visualViewport.height >= initialHeight * 0.9) {
+            document.body.style.height = '100dvh';
+            document.documentElement.style.height = '100dvh';
+            var flutterView = document.querySelector('flt-glass-pane');
+            if (flutterView) {
+              flutterView.style.height = '100dvh';
+            }
+          }
+        }
 
-      // Only force recalculate when height actually changes (keyboard open/close)
-      if (currentHeight !== lastHeight) {
-        document.body.style.height = currentHeight + 'px';
-        document.documentElement.style.height = currentHeight + 'px';
+        // Monitor visualViewport resize (more accurate than window.resize)
+        window.visualViewport.addEventListener('resize', resetViewport);
 
-        setTimeout(() => {
-          document.body.style.height = '100%';
-          document.documentElement.style.height = '100%';
-        }, 50);
-
-        lastHeight = currentHeight;
+        // Also handle focusout for when keyboard closes via Android back gesture
+        document.addEventListener('focusout', function () {
+          setTimeout(resetViewport, 300);
+        });
       }
-    }
-
-    // Only listen to resize event - focus/blur can cause Flutter rebuild
-    window.addEventListener('resize', forceResize);
+    })();
   </script>
   <!-- This script adds the flutter initialization JS code -->
   <script src="flutter.js" defer=""></script>
