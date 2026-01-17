@@ -407,17 +407,13 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
 
   @override
   Widget build(BuildContext context) {
-    // Calculate real height ignoring keyboard
-    final mediaQuery = MediaQuery.of(context);
-    final realHeight = mediaQuery.size.height - mediaQuery.viewInsets.bottom;
-    
     return GestureDetector(
       onTap: () {
         // Force unfocus when tapping outside - PWA keyboard hack
         FocusManager.instance.primaryFocus?.unfocus();
       },
       child: Scaffold(
-        resizeToAvoidBottomInset: true, // Allow Flutter to properly resize for keyboard
+        resizeToAvoidBottomInset: false, // FIXED layout - don't let Flutter mess with viewport
         body: Stack(
           children: [
             // Background Gradient
@@ -454,12 +450,7 @@ class _AuthScreenState extends State<AuthScreen> with SingleTickerProviderStateM
             child: Center(
               child: SingleChildScrollView(
                 physics: const ClampingScrollPhysics(),
-                padding: EdgeInsets.only(
-                  left: 24, 
-                  right: 24, 
-                  top: 24, 
-                  bottom: 24 + mediaQuery.viewInsets.bottom // Manually add padding for keyboard
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
                 child: FadeTransition(
                   opacity: _fadeAnimation,
                   child: ConstrainedBox(

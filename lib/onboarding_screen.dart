@@ -629,7 +629,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
         FocusManager.instance.primaryFocus?.unfocus();
       },
       child: Scaffold(
-        resizeToAvoidBottomInset: true, // Allow Flutter to properly resize for keyboard
+        resizeToAvoidBottomInset: false, // FIXED layout - don't let Flutter mess with viewport
         body: Stack(
           children: [
             // Background Gradient Premium
