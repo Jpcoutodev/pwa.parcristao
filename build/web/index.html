@@ -114,48 +114,41 @@
 
   <script>
     // The value below is injected by flutter build, do not touch.
-    const serviceWorkerVersion = "789603429";
+    const serviceWorkerVersion = "556311079";
 
-    // AGGRESSIVE Fix for Android Chrome 108+ keyboard resize issue
+    // Fix for Android Chrome keyboard + BACK BUTTON issue
+    // The back button closes keyboard without firing any DOM events
     (function () {
       var isAndroid = /Android/i.test(navigator.userAgent);
       if (!isAndroid) return;
 
       var initialHeight = window.innerHeight;
+      var lastKnownHeight = initialHeight;
       var isKeyboardOpen = false;
+      var pollingInterval = null;
 
       function forceLayoutReset() {
-        // Force a complete layout recalculation
         var height = window.innerHeight + 'px';
 
-        // Reset all height properties
         document.body.style.height = height;
         document.documentElement.style.height = height;
-
-        // Force reflow by reading offsetHeight
         void document.body.offsetHeight;
 
-        // Target Flutter's glass pane
         var flutterView = document.querySelector('flt-glass-pane');
         if (flutterView) {
           flutterView.style.height = height;
           flutterView.style.minHeight = height;
           flutterView.style.maxHeight = height;
 
-          // Force Flutter to recognize the change
           var shadowRoot = flutterView.shadowRoot;
           if (shadowRoot) {
             var fltHost = shadowRoot.querySelector('flt-semantics-host');
-            if (fltHost) {
-              fltHost.style.height = height;
-            }
+            if (fltHost) fltHost.style.height = height;
           }
         }
 
-        // Dispatch resize event to trigger Flutter's resize handlers
         window.dispatchEvent(new Event('resize'));
 
-        // Reset to dynamic after a frame
         requestAnimationFrame(function () {
           document.body.style.height = '100dvh';
           document.documentElement.style.height = '100dvh';
@@ -167,30 +160,75 @@
         });
       }
 
-      // Monitor visualViewport
+      // POLLING: Check height every 200ms to detect back button keyboard close
+      function startPolling() {
+        if (pollingInterval) return;
+        pollingInterval = setInterval(function () {
+          var currentHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+
+          // Keyboard closed (height increased significantly)
+          if (isKeyboardOpen && currentHeight >= initialHeight * 0.9) {
+            isKeyboardOpen = false;
+            stopPolling();
+            forceLayoutReset();
+            setTimeout(forceLayoutReset, 200);
+            setTimeout(forceLayoutReset, 400);
+          }
+
+          lastKnownHeight = currentHeight;
+        }, 200);
+      }
+
+      function stopPolling() {
+        if (pollingInterval) {
+          clearInterval(pollingInterval);
+          pollingInterval = null;
+        }
+      }
+
+      // Start polling when input is focused (keyboard opens)
+      document.addEventListener('focusin', function (e) {
+        if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.contentEditable === 'true')) {
+          setTimeout(function () {
+            var currentHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+            if (currentHeight < initialHeight * 0.85) {
+              isKeyboardOpen = true;
+              startPolling();
+            }
+          }, 300);
+        }
+      });
+
+      // Also handle focusout
+      document.addEventListener('focusout', function (e) {
+        if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) {
+          setTimeout(function () {
+            var currentHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+            if (currentHeight >= initialHeight * 0.9) {
+              isKeyboardOpen = false;
+              stopPolling();
+              forceLayoutReset();
+            }
+          }, 300);
+        }
+      });
+
+      // Monitor visualViewport as backup
       if (window.visualViewport) {
         window.visualViewport.addEventListener('resize', function () {
           var currentHeight = window.visualViewport.height;
-          var wasKeyboardOpen = isKeyboardOpen;
-          isKeyboardOpen = currentHeight < initialHeight * 0.85;
 
-          // Keyboard just closed
-          if (wasKeyboardOpen && !isKeyboardOpen) {
-            setTimeout(forceLayoutReset, 100);
-            setTimeout(forceLayoutReset, 300);
-            setTimeout(forceLayoutReset, 500);
+          if (currentHeight < initialHeight * 0.85 && !isKeyboardOpen) {
+            isKeyboardOpen = true;
+            startPolling();
+          } else if (currentHeight >= initialHeight * 0.9 && isKeyboardOpen) {
+            isKeyboardOpen = false;
+            stopPolling();
+            forceLayoutReset();
+            setTimeout(forceLayoutReset, 200);
           }
         });
       }
-
-      // Handle focusout (keyboard close via back gesture)
-      document.addEventListener('focusout', function (e) {
-        if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) {
-          setTimeout(forceLayoutReset, 100);
-          setTimeout(forceLayoutReset, 300);
-          setTimeout(forceLayoutReset, 600);
-        }
-      });
 
       // Handle orientation change
       window.addEventListener('orientationchange', function () {
@@ -198,6 +236,13 @@
           initialHeight = window.innerHeight;
           forceLayoutReset();
         }, 500);
+      });
+
+      // Safety: reset on page visibility change (e.g., switching apps)
+      document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'visible') {
+          setTimeout(forceLayoutReset, 300);
+        }
       });
     })();
   </script>
