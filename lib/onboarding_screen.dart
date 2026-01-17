@@ -74,6 +74,43 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
   bool _isGeocodingCity = false;
   bool _isLoadingGoogle = false;
 
+  // Step names for onboarding progress tracking
+  static const Map<int, String> _stepNames = {
+    0: 'welcome',
+    1: 'basic_info',
+    2: 'bio',
+    3: 'location',
+    4: 'interests',
+    5: 'faith',
+    6: 'church',
+    7: 'photos',
+  };
+
+  /// Updates onboarding progress in Supabase
+  Future<void> _updateOnboardingProgress(int step, {bool completed = false}) async {
+    try {
+      final supabase = Supabase.instance.client;
+      final userId = supabase.auth.currentUser?.id;
+      if (userId == null) return;
+
+      final now = DateTime.now().toIso8601String();
+      final stepName = _stepNames[step] ?? 'unknown';
+
+      await supabase.from('onboarding_progress').upsert({
+        'user_id': userId,
+        'current_step': step,
+        'step_name': stepName,
+        'updated_at': now,
+        if (completed) 'completed_at': now,
+      }, onConflict: 'user_id');
+
+      print('Onboarding progress updated: step $step ($stepName), completed: $completed');
+    } catch (e) {
+      print('Error updating onboarding progress: $e');
+      // Don't block user flow if tracking fails
+    }
+  }
+
   Future<void> _pickImagesFromGallery() async {
     try {
       final List<XFile> images = await _picker.pickMultiImage(
@@ -220,6 +257,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
     _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(parent: _fadeController, curve: Curves.easeOut),
     );
+
+    // Initialize onboarding progress tracking (step 0 - Welcome)
+    _updateOnboardingProgress(0);
   }
 
   @override
@@ -238,10 +278,13 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
   void _nextPage() {
     if (_validateCurrentStep()) {
       if (_currentPage < 7) {
+        final nextPage = _currentPage + 1;
         _pageController.nextPage(
           duration: const Duration(milliseconds: 400),
           curve: Curves.easeInOut,
         );
+        // Track progress to next step
+        _updateOnboardingProgress(nextPage);
       } else {
         _finishOnboarding();
       }
@@ -551,6 +594,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
         'longitude': _longitude,
         'updated_at': DateTime.now().toIso8601String(),
       });
+
+      // Mark onboarding as completed
+      await _updateOnboardingProgress(7, completed: true);
 
       // Fechar loading
       if (mounted) Navigator.pop(context);
