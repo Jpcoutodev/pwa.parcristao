@@ -637,10 +637,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     SnackBar(
                       content: Row(
                         children: [
-                          const Icon(Icons.favorite, color: Colors.white),
+                          const Icon(Icons.waving_hand, color: Colors.white),
                           const SizedBox(width: 8),
                           Expanded(
-                            child: Text('💖 ${likerProfile.name} gostou de você!'),
+                            child: Text('👋 ${likerProfile.name} mandou um olá!'),
                           ),
                         ],
                       ),
@@ -1649,7 +1649,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 icon: Stack(
                   clipBehavior: Clip.none,
                   children: [
-                    _buildNavIcon(Icons.favorite, 1),
+                    _buildNavIcon(Icons.waving_hand, 1),
                     if (_notificationCount > 0)
                       Positioned(
                         right: -2,
@@ -1678,7 +1678,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       ),
                   ],
                 ),
-                label: 'Interesse',
+                label: 'Olás',
               ),
               BottomNavigationBarItem(
                 icon: Stack(
@@ -1986,7 +1986,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Widget _buildInterestCard(Profile profile, String status, {String? matchId}) {
     // Status-based colors and icons
     final Map<String, Map<String, dynamic>> statusConfig = {
-      'recebidos': {'color': const Color(0xFFFF6B6B), 'icon': Icons.favorite, 'label': 'Curtiu você'},
+      'recebidos': {'color': const Color(0xFFFF6B6B), 'icon': Icons.waving_hand, 'label': 'Enviou Olá'},
       'mutuos': {'color': const Color(0xFF667eea), 'icon': Icons.favorite, 'label': 'Match!'},
       'super': {'color': const Color(0xFFFFD93D), 'icon': Icons.star, 'label': 'Super Like'},
       'enviados': {'color': const Color(0xFF6BCB77), 'icon': Icons.send, 'label': 'Enviado'},
@@ -3858,7 +3858,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           ),
           // Botão Like
           _buildCircleButton(
-            icon: Icons.favorite,
+            icon: Icons.waving_hand,
             color: const Color(0xFF00E676), // Verde vibrante
             size: 65,
             iconSize: 32,
@@ -5303,7 +5303,7 @@ class _TutorialScreenState extends State<TutorialScreen> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     const Text(
-                      'Guia do App',
+                      'Veja como funciona',
                       style: TextStyle(
                         color: Colors.white,
                         fontSize: 28,
@@ -5343,7 +5343,7 @@ class _TutorialScreenState extends State<TutorialScreen> {
                             children: [
                                _buildGuideItem(Icons.swipe_left, 'Pular', Colors.redAccent),
                                Container(width: 1, height: 50, color: Colors.white24),
-                               _buildGuideItem(Icons.swipe_right, 'Curtir', Colors.greenAccent),
+                               _buildGuideItem(Icons.swipe_right, 'Olá', Colors.greenAccent),
                             ],
                           ),
                         ],
@@ -5357,7 +5357,7 @@ class _TutorialScreenState extends State<TutorialScreen> {
                         children: [
                           _buildGuideRow(Icons.star, 'Super Like', 'Destaca seu perfil para a pessoa.', iconColor: Colors.blueAccent),
                           const Divider(color: Colors.white12, height: 20),
-                          _buildGuideRow(Icons.favorite, 'Like', 'Demonstra interesse em conhecer.', iconColor: const Color(0xFF00E676)),
+                          _buildGuideRow(Icons.waving_hand, 'Olá', 'Manda um cumprimento. Se a pessoa responder, vocês podem conversar!', iconColor: const Color(0xFF4CAF50)),
                         ],
                       ),
 
@@ -5371,7 +5371,7 @@ class _TutorialScreenState extends State<TutorialScreen> {
                           const Divider(color: Colors.white12, height: 20),
                           _buildGuideRow(Icons.visibility, 'Perfil Completo', 'Veja a bio, igreja e mais detalhes.'),
                           const Divider(color: Colors.white12, height: 20),
-                          _buildGuideRow(Icons.message_rounded, 'Mensagem', 'Envie uma mensagem direta.'),
+                          _buildGuideRow(Icons.chat_bubble_outline, 'Conversa', 'Após o match, conversem por mensagem.'),
                         ],
                       ),
                       

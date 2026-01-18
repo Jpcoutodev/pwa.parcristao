@@ -997,7 +997,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 10),
               child: Text(
-                'Conecte-se com pessoas que compartilham sua fé, valores e propósito de vida. Sua história de amor pode começar aqui.',
+                'Prezamos por perfis reais e segurança, então em poucos passos vamos criar seu perfil.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 16,
@@ -1222,6 +1222,18 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
           
           const SizedBox(height: 36),
           _buildContinueButton('Continuar', _nextPage),
+          const SizedBox(height: 12),
+          TextButton(
+            onPressed: _nextPage,
+            child: Text(
+              'Escrever depois',
+              style: TextStyle(
+                color: Colors.grey[500],
+                fontSize: 14,
+                decoration: TextDecoration.underline,
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -1388,7 +1400,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
                     color: Colors.green.withOpacity(0.15),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: const Icon(Icons.lock_outline, color: Colors.green, size: 22),
+                  child: const Icon(Icons.shield_outlined, color: Colors.green, size: 22),
                 ),
                 const SizedBox(width: 14),
                 Expanded(
@@ -1396,7 +1408,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Sua privacidade é protegida',
+                        '🔒 Sua segurança é nossa prioridade',
                         style: TextStyle(
                           color: Colors.green[800],
                           fontWeight: FontWeight.bold,
@@ -1405,7 +1417,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        'Sua localização é usada APENAS para encontrar pessoas próximas.',
+                        'Seus dados de localização são criptografados e nunca compartilhados.',
                         style: TextStyle(
                           color: Colors.green[700],
                           fontSize: 13,

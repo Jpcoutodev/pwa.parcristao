@@ -327,7 +327,7 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> {
                 children: [
                    _buildActionButton(Icons.close, Colors.white, Colors.redAccent, 60, () => Navigator.pop(context, 'dislike')),
                    _buildActionButton(Icons.star, Colors.white, Colors.blueAccent, 50, () => Navigator.pop(context, 'super')),
-                   _buildActionButton(Icons.favorite, Colors.white, const Color(0xFF00E676), 60, () => Navigator.pop(context, 'like')),
+                   _buildActionButton(Icons.waving_hand, Colors.white, const Color(0xFF00E676), 60, () => Navigator.pop(context, 'like')),
                    if (profile.matchId != null)
                      _buildActionButton(Icons.chat, Colors.white, const Color(0xFF667eea), 60, () {
                        Navigator.push(
