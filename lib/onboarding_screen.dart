@@ -1417,7 +1417,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        'Seus dados de localização são criptografados e nunca compartilhados.',
+                        'Sua localização é usada APENAS para encontrar pessoas próximas.',
                         style: TextStyle(
                           color: Colors.green[700],
                           fontSize: 13,
@@ -1504,14 +1504,25 @@ class _OnboardingScreenState extends State<OnboardingScreen> with TickerProvider
           
           // Subtle fallback link
           if (!_showManualCityInput)
-            TextButton(
-              onPressed: () => setState(() => _showManualCityInput = true),
-              child: Text(
-                'Não consegue usar GPS? Digite sua cidade',
-                style: TextStyle(
-                  color: Colors.grey[500],
-                  fontSize: 13,
-                  decoration: TextDecoration.underline,
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 10),
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () => setState(() => _showManualCityInput = true),
+                icon: Icon(Icons.edit_location_alt, color: _primaryColor),
+                label: Text(
+                  'Prefiro digitar minha cidade',
+                  style: TextStyle(
+                    color: _primaryColor,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  side: BorderSide(color: _primaryColor, width: 2),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  backgroundColor: Colors.white,
                 ),
               ),
             ),
